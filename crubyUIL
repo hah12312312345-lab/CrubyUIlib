@@ -1,0 +1,791 @@
+-- ================================================================
+--   SURVIVAL COLLECTOR  |  Main Loader
+--   Paste toàn bộ file này vào executor và Execute.
+--   Yêu cầu: Synapse X / KRNL / Fluxus / Delta
+-- ================================================================
+
+-- ===================== PHẦN 1: CONFIG ===========================
+local CONFIG = {
+    -- Tên vật phẩm trong game (chỉnh lại cho đúng với game của bạn)
+    ItemNames = {
+        Resources = { "Wood", "Stone", "Pelt", "Flint", "Branch", "Rock", "Fur" },
+        Food      = { "Berry", "Berries", "Meat", "Mushroom", "Water", "Fish", "Carrot" },
+        Rare      = { "Infernal", "Blueprint", "Chest", "Treasure", "Relic", "Gem" },
+    },
+    -- Màu ESP theo loại
+    ESPColors = {
+        Resources = Color3.fromRGB(220, 220, 220),  -- Trắng
+        Food      = Color3.fromRGB(80,  210, 100),  -- Xanh lá
+        Rare      = Color3.fromRGB(255, 200, 50),   -- Vàng
+        Unknown   = Color3.fromRGB(160, 160, 180),  -- Xám
+    },
+    BringDelay         = 0.12,  -- giây delay giữa mỗi item (chống kick/despawn)
+    AutoCollectRadius  = 20,    -- studs
+    MaxESPDistance     = 200,   -- studs, quá xa thì ẩn label
+}
+
+-- ===================== PHẦN 2: SERVICES =========================
+local Players         = game:GetService("Players")
+local RunService      = game:GetService("RunService")
+local UserInputService= game:GetService("UserInputService")
+local TweenService    = game:GetService("TweenService")
+local LocalPlayer     = Players.LocalPlayer
+
+-- ===================== PHẦN 3: STATE ============================
+local State = {
+    CampPosition    = nil,    -- Vector3, được set bởi người dùng
+    BringEnabled    = {
+        Resources = true,
+        Food      = true,
+        Rare      = true,
+    },
+    ItemESP         = false,
+    AutoCollect     = false,
+    IsBringing      = false,  -- flag chống double-run
+    CurrentTab      = "Main",
+    ESPLabels       = {},     -- { [part] = { bill, dist_label } }
+}
+
+-- ================================================================
+--   MODULE 1: COLLECTION_MODULE
+--   Xử lý logic tìm / gom / hút đồ
+-- ================================================================
+local Collection = {}
+
+-- Phân loại một vật phẩm dựa vào tên
+function Collection.ClassifyItem(name)
+    local lower = name:lower()
+    for cat, names in pairs(CONFIG.ItemNames) do
+        for _, n in ipairs(names) do
+            if lower:find(n:lower()) then
+                return cat
+            end
+        end
+    end
+    return "Unknown"
+end
+
+-- Kiểm tra item có được bật không
+function Collection.IsEnabled(category)
+    return State.BringEnabled[category] ~= false  -- Unknown luôn enabled nếu không filter
+end
+
+-- Tìm tất cả item trên map (BasePart hoặc Model có PrimaryPart)
+function Collection.FindAllItems()
+    local items = {}
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        -- Tìm các Part/Model không thuộc Player và không phải terrain
+        if obj:IsA("BasePart") and not obj:IsDescendantOf(Players.LocalPlayer.Character or Instance.new("Folder")) then
+            local cat = Collection.ClassifyItem(obj.Name)
+            if cat ~= "Unknown" or true then  -- lấy hết, lọc sau
+                table.insert(items, { Part = obj, Category = cat })
+            end
+        end
+    end
+    return items
+end
+
+-- Gom một item về vị trí camp
+function Collection.BringItem(part, targetPos)
+    if not part or not part.Parent then return end
+    -- Cố gắng tween position (nếu không anchored)
+    if not part.Anchored then
+        part.CFrame = CFrame.new(targetPos + Vector3.new(math.random(-3,3), 0.5, math.random(-3,3)))
+    else
+        -- Nếu anchored thì bỏ anchor rồi move
+        part.Anchored = false
+        task.wait(0.02)
+        part.CFrame = CFrame.new(targetPos + Vector3.new(math.random(-3,3), 0.5, math.random(-3,3)))
+    end
+end
+
+-- Gom tất cả item với delay chống kick
+function Collection.BringAll(statusCallback)
+    if State.IsBringing then return end
+    if not State.CampPosition then
+        if statusCallback then statusCallback("⚠ Set Camp trước!") end
+        return
+    end
+    State.IsBringing = true
+    task.spawn(function()
+        local items = Collection.FindAllItems()
+        local count = 0
+        local total = #items
+        for i, item in ipairs(items) do
+            -- Kiểm tra category có được bật không
+            if item.Category ~= "Unknown" and not State.BringEnabled[item.Category] then
+                -- skip
+            else
+                Collection.BringItem(item.Part, State.CampPosition)
+                count = count + 1
+                if statusCallback then
+                    statusCallback(string.format("Đang gom... %d/%d", count, total))
+                end
+                task.wait(CONFIG.BringDelay)  -- delay chống despawn / kick
+            end
+        end
+        if statusCallback then statusCallback(string.format("✓ Gom xong! %d items", count)) end
+        State.IsBringing = false
+    end)
+end
+
+-- Auto-collect loop: hút đồ trong bán kính quanh nhân vật
+function Collection.StartAutoCollect()
+    task.spawn(function()
+        while State.AutoCollect do
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp and State.CampPosition then
+                for _, obj in ipairs(workspace:GetDescendants()) do
+                    if obj:IsA("BasePart") and not obj:IsDescendantOf(char) then
+                        local dist = (obj.Position - hrp.Position).Magnitude
+                        if dist <= CONFIG.AutoCollectRadius then
+                            local cat = Collection.ClassifyItem(obj.Name)
+                            if cat == "Unknown" or State.BringEnabled[cat] then
+                                Collection.BringItem(obj, State.CampPosition)
+                                task.wait(0.05)
+                            end
+                        end
+                    end
+                end
+            end
+            task.wait(0.5)  -- check mỗi 0.5s
+        end
+    end)
+end
+
+-- ================================================================
+--   MODULE 2: ESP_MODULE
+--   Hiển thị tên + khoảng cách item trên màn hình
+-- ================================================================
+local ESP = {}
+
+-- Tạo BillboardGui trên một part
+function ESP.CreateLabel(part, category)
+    -- Xóa label cũ nếu có
+    ESP.RemoveLabel(part)
+
+    local color = CONFIG.ESPColors[category] or CONFIG.ESPColors.Unknown
+
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "_ESP_Label"
+    bb.AlwaysOnTop = true
+    bb.Size = UDim2.new(0, 100, 0, 40)
+    bb.StudsOffset = Vector3.new(0, 2, 0)
+    bb.Adornee = part
+    bb.Parent = part
+
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Size = UDim2.new(1, 0, 0.6, 0)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Text = part.Name
+    nameLabel.TextColor3 = color
+    nameLabel.TextStrokeTransparency = 0.4
+    nameLabel.TextSize = 13
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.Parent = bb
+
+    local distLabel = Instance.new("TextLabel")
+    distLabel.Size = UDim2.new(1, 0, 0.4, 0)
+    distLabel.Position = UDim2.new(0, 0, 0.6, 0)
+    distLabel.BackgroundTransparency = 1
+    distLabel.Text = "-- m"
+    distLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    distLabel.TextStrokeTransparency = 0.5
+    distLabel.TextSize = 11
+    distLabel.Font = Enum.Font.Gotham
+    distLabel.Parent = bb
+
+    State.ESPLabels[part] = { Billboard = bb, DistLabel = distLabel }
+end
+
+function ESP.RemoveLabel(part)
+    if State.ESPLabels[part] then
+        local data = State.ESPLabels[part]
+        if data.Billboard and data.Billboard.Parent then
+            data.Billboard:Destroy()
+        end
+        State.ESPLabels[part] = nil
+    end
+end
+
+function ESP.ClearAll()
+    for part, _ in pairs(State.ESPLabels) do
+        ESP.RemoveLabel(part)
+    end
+end
+
+-- Vòng lặp update ESP distance
+function ESP.StartUpdateLoop()
+    task.spawn(function()
+        while State.ItemESP do
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
+            -- Tìm items mới
+            local seen = {}
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("BasePart") and not obj:IsDescendantOf(char or Instance.new("Folder")) then
+                    local cat = Collection.ClassifyItem(obj.Name)
+                    if cat ~= "Unknown" then
+                        seen[obj] = cat
+                        if not State.ESPLabels[obj] then
+                            ESP.CreateLabel(obj, cat)
+                        end
+                    end
+                end
+            end
+
+            -- Update distances + xóa stale labels
+            for part, data in pairs(State.ESPLabels) do
+                if not part or not part.Parent then
+                    ESP.RemoveLabel(part)
+                elseif hrp then
+                    local dist = math.floor((part.Position - hrp.Position).Magnitude)
+                    if dist > CONFIG.MaxESPDistance then
+                        data.Billboard.Enabled = false
+                    else
+                        data.Billboard.Enabled = true
+                        data.DistLabel.Text = dist .. " m"
+                    end
+                end
+            end
+
+            task.wait(0.3)
+        end
+        -- Tắt ESP → xóa hết
+        ESP.ClearAll()
+    end)
+end
+
+-- ================================================================
+--   MODULE 3: UI_MODULE
+--   Giao diện Banana UI style: sidebar + tabs
+-- ================================================================
+local UI = {}
+
+-- Màu sắc theme
+local T = {
+    BG        = Color3.fromRGB(14,  14,  20),
+    Sidebar   = Color3.fromRGB(20,  20,  30),
+    Card      = Color3.fromRGB(24,  24,  36),
+    Accent    = Color3.fromRGB(100, 180, 255),  -- xanh dương nhạt
+    AccentAlt = Color3.fromRGB(80,  220, 140),  -- xanh lá
+    Danger    = Color3.fromRGB(255,  80,  80),
+    Text      = Color3.fromRGB(235, 235, 245),
+    SubText   = Color3.fromRGB(140, 140, 165),
+    Border    = Color3.fromRGB(38,  38,  58),
+}
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "SurvivalCollectorUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.Parent = game:GetService("CoreGui")
+
+-- Root window
+local Window = Instance.new("Frame")
+Window.Name = "Window"
+Window.Size = UDim2.new(0, 520, 0, 360)
+Window.Position = UDim2.new(0.5, -260, 0.5, -180)
+Window.BackgroundColor3 = T.BG
+Window.BorderSizePixel = 0
+Window.ClipsDescendants = true
+Window.Parent = ScreenGui
+
+local WCorner = Instance.new("UICorner")
+WCorner.CornerRadius = UDim.new(0, 14)
+WCorner.Parent = Window
+
+local WStroke = Instance.new("UIStroke")
+WStroke.Color = T.Border
+WStroke.Thickness = 1
+WStroke.Parent = Window
+
+-- ── Drag ────────────────────────────────────────────────────────
+do
+    local dragging, dragStart, startPos
+    Window.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true; dragStart = inp.Position; startPos = Window.Position
+        end
+    end)
+    Window.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+    end)
+    UserInputService.InputChanged:Connect(function(inp)
+        if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
+            local d = inp.Position - dragStart
+            Window.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset+d.X, startPos.Y.Scale, startPos.Y.Offset+d.Y)
+        end
+    end)
+end
+
+-- ── Sidebar (160px) ─────────────────────────────────────────────
+local Sidebar = Instance.new("Frame")
+Sidebar.Name = "Sidebar"
+Sidebar.Size = UDim2.new(0, 155, 1, 0)
+Sidebar.BackgroundColor3 = T.Sidebar
+Sidebar.BorderSizePixel = 0
+Sidebar.Parent = Window
+
+local SCorner = Instance.new("UICorner")
+SCorner.CornerRadius = UDim.new(0, 14)
+SCorner.Parent = Sidebar
+
+-- Phủ góc phải sidebar (để ghép với content)
+local SFix = Instance.new("Frame")
+SFix.Size = UDim2.new(0, 14, 1, 0)
+SFix.Position = UDim2.new(1, -14, 0, 0)
+SFix.BackgroundColor3 = T.Sidebar
+SFix.BorderSizePixel = 0
+SFix.Parent = Sidebar
+
+-- Logo / title
+local Logo = Instance.new("TextLabel")
+Logo.Size = UDim2.new(1, 0, 0, 60)
+Logo.Position = UDim2.new(0, 0, 0, 8)
+Logo.BackgroundTransparency = 1
+Logo.Text = "🏕 Survivor"
+Logo.TextColor3 = T.Text
+Logo.TextSize = 16
+Logo.Font = Enum.Font.GothamBold
+Logo.Parent = Sidebar
+
+local LogoSub = Instance.new("TextLabel")
+LogoSub.Size = UDim2.new(1, 0, 0, 16)
+LogoSub.Position = UDim2.new(0, 0, 0, 38)
+LogoSub.BackgroundTransparency = 1
+LogoSub.Text = "Item Collector"
+LogoSub.TextColor3 = T.SubText
+LogoSub.TextSize = 11
+LogoSub.Font = Enum.Font.Gotham
+LogoSub.Parent = Sidebar
+
+-- Divider bên dưới logo
+local SDiv = Instance.new("Frame")
+SDiv.Size = UDim2.new(0.75, 0, 0, 1)
+SDiv.Position = UDim2.new(0.125, 0, 0, 62)
+SDiv.BackgroundColor3 = T.Border
+SDiv.BorderSizePixel = 0
+SDiv.Parent = Sidebar
+
+-- ── Content area ─────────────────────────────────────────────────
+local Content = Instance.new("Frame")
+Content.Name = "Content"
+Content.Size = UDim2.new(1, -155, 1, 0)
+Content.Position = UDim2.new(0, 155, 0, 0)
+Content.BackgroundTransparency = 1
+Content.Parent = Window
+
+-- ── Helpers ──────────────────────────────────────────────────────
+local tabButtons = {}
+local tabPages   = {}
+
+local function SetTab(name)
+    State.CurrentTab = name
+    for tname, btn in pairs(tabButtons) do
+        local active = (tname == name)
+        TweenService:Create(btn, TweenInfo.new(0.15), {
+            BackgroundColor3 = active and T.Accent or Color3.fromRGB(0,0,0),
+            BackgroundTransparency = active and 0.85 or 1,
+        }):Play()
+        btn.TextColor3 = active and T.Accent or T.SubText
+    end
+    for tname, page in pairs(tabPages) do
+        page.Visible = (tname == name)
+    end
+end
+
+-- Tạo tab button ở sidebar
+local function AddTabButton(icon, label, yOff)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -16, 0, 36)
+    btn.Position = UDim2.new(0, 8, 0, yOff)
+    btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    btn.BackgroundTransparency = 1
+    btn.Text = icon .. "  " .. label
+    btn.TextColor3 = T.SubText
+    btn.TextSize = 13
+    btn.Font = Enum.Font.Gotham
+    btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.BorderSizePixel = 0
+    btn.Parent = Sidebar
+
+    local bCorner = Instance.new("UICorner")
+    bCorner.CornerRadius = UDim.new(0, 8)
+    bCorner.Parent = btn
+
+    local leftBar = Instance.new("Frame")
+    leftBar.Size = UDim2.new(0, 3, 0.6, 0)
+    leftBar.Position = UDim2.new(0, 0, 0.2, 0)
+    leftBar.BackgroundColor3 = T.Accent
+    leftBar.BorderSizePixel = 0
+    leftBar.Visible = false
+    leftBar.Parent = btn
+
+    local lbCorner = Instance.new("UICorner")
+    lbCorner.CornerRadius = UDim.new(1, 0)
+    lbCorner.Parent = leftBar
+
+    tabButtons[label] = btn
+    btn.MouseButton1Click:Connect(function()
+        SetTab(label)
+    end)
+    return btn
+end
+
+-- Tạo trang content
+local function AddPage(name)
+    local page = Instance.new("ScrollingFrame")
+    page.Name = name
+    page.Size = UDim2.new(1, -16, 1, -8)
+    page.Position = UDim2.new(0, 8, 0, 4)
+    page.BackgroundTransparency = 1
+    page.BorderSizePixel = 0
+    page.ScrollBarThickness = 3
+    page.ScrollBarImageColor3 = T.Accent
+    page.Visible = false
+    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    page.CanvasSize = UDim2.new(0, 0, 0, 0)
+    page.Parent = Content
+
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 8)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Parent = page
+
+    local padding = Instance.new("UIPadding")
+    padding.PaddingTop = UDim.new(0, 8)
+    padding.PaddingBottom = UDim.new(0, 8)
+    padding.Parent = page
+
+    tabPages[name] = page
+    return page
+end
+
+-- Card container
+local function AddCard(page, height)
+    local card = Instance.new("Frame")
+    card.Size = UDim2.new(1, 0, 0, height or 50)
+    card.BackgroundColor3 = T.Card
+    card.BorderSizePixel = 0
+    card.Parent = page
+
+    local cc = Instance.new("UICorner")
+    cc.CornerRadius = UDim.new(0, 10)
+    cc.Parent = card
+
+    local cs = Instance.new("UIStroke")
+    cs.Color = T.Border
+    cs.Thickness = 1
+    cs.Parent = card
+
+    return card
+end
+
+-- Nút bấm đẹp
+local function AddButton(parent, text, color, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -20, 0, 34)
+    btn.Position = UDim2.new(0, 10, 0.5, -17)
+    btn.BackgroundColor3 = color or T.Accent
+    btn.Text = text
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = 13
+    btn.Font = Enum.Font.GothamBold
+    btn.BorderSizePixel = 0
+    btn.Parent = parent
+
+    local bc = Instance.new("UICorner")
+    bc.CornerRadius = UDim.new(0, 8)
+    bc.Parent = btn
+
+    btn.MouseButton1Click:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.08), { BackgroundTransparency = 0.4 }):Play()
+        task.delay(0.12, function()
+            TweenService:Create(btn, TweenInfo.new(0.08), { BackgroundTransparency = 0 }):Play()
+        end)
+        if callback then callback() end
+    end)
+    return btn
+end
+
+-- Toggle switch
+local function AddToggle(parent, label, defaultVal, yOff, callback)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, -20, 0, 32)
+    row.Position = UDim2.new(0, 10, 0, yOff or 0)
+    row.BackgroundTransparency = 1
+    row.Parent = parent
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.75, 0, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = label
+    lbl.TextColor3 = T.Text
+    lbl.TextSize = 12
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
+
+    local bg = Instance.new("Frame")
+    bg.Size = UDim2.new(0, 40, 0, 20)
+    bg.Position = UDim2.new(1, -40, 0.5, -10)
+    bg.BackgroundColor3 = defaultVal and T.Accent or T.Border
+    bg.BorderSizePixel = 0
+    bg.Parent = row
+
+    local bgc = Instance.new("UICorner")
+    bgc.CornerRadius = UDim.new(1, 0)
+    bgc.Parent = bg
+
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 16, 0, 16)
+    knob.Position = defaultVal and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    knob.BorderSizePixel = 0
+    knob.Parent = bg
+
+    local kc = Instance.new("UICorner")
+    kc.CornerRadius = UDim.new(1, 0)
+    kc.Parent = knob
+
+    local state = defaultVal
+    local hitbox = Instance.new("TextButton")
+    hitbox.Size = UDim2.new(1, 0, 1, 0)
+    hitbox.BackgroundTransparency = 1
+    hitbox.Text = ""
+    hitbox.Parent = row
+
+    hitbox.MouseButton1Click:Connect(function()
+        state = not state
+        TweenService:Create(knob, TweenInfo.new(0.15), {
+            Position = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+        }):Play()
+        TweenService:Create(bg, TweenInfo.new(0.15), {
+            BackgroundColor3 = state and T.Accent or T.Border
+        }):Play()
+        if callback then callback(state) end
+    end)
+    return row
+end
+
+-- Section label
+local function AddSectionLabel(page, text)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, 0, 0, 20)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = "  " .. text
+    lbl.TextColor3 = T.Accent
+    lbl.TextSize = 11
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = page
+    return lbl
+end
+
+-- Status label cập nhật được
+local StatusText
+
+-- ================================================================
+--   BUILD TABS
+-- ================================================================
+AddTabButton("🏠", "Main",      80)
+AddTabButton("🎒", "Items",    122)
+AddTabButton("🔧", "Utilities",164)
+AddTabButton("⚙",  "Settings", 206)
+
+-- ─── TAB: MAIN ───────────────────────────────────────────────────
+do
+    local page = AddPage("Main")
+
+    -- Camp card
+    local campCard = AddCard(page, 56)
+    local campLabel = Instance.new("TextLabel")
+    campLabel.Size = UDim2.new(1, -10, 0, 18)
+    campLabel.Position = UDim2.new(0, 10, 0, 6)
+    campLabel.BackgroundTransparency = 1
+    campLabel.Text = "🔥 Vị trí trại: Chưa đặt"
+    campLabel.TextColor3 = T.SubText
+    campLabel.TextSize = 12
+    campLabel.Font = Enum.Font.Gotham
+    campLabel.TextXAlignment = Enum.TextXAlignment.Left
+    campLabel.Parent = campCard
+
+    AddButton(campCard, "📍 Set Camp Location", Color3.fromRGB(60, 130, 220), function()
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            State.CampPosition = hrp.Position
+            campLabel.Text = string.format("🔥 Camp: %.1f, %.1f, %.1f", hrp.Position.X, hrp.Position.Y, hrp.Position.Z)
+            campLabel.TextColor3 = T.AccentAlt
+        end
+    end).Position = UDim2.new(0, 10, 0, 20)
+    -- adjust size
+    campCard:FindFirstChildWhichIsA("TextButton").Size = UDim2.new(1, -20, 0, 28)
+
+    -- Bring All card
+    local bringCard = AddCard(page, 50)
+    StatusText = Instance.new("TextLabel")
+    StatusText.Size = UDim2.new(1, -10, 0, 16)
+    StatusText.Position = UDim2.new(0, 10, 0, 4)
+    StatusText.BackgroundTransparency = 1
+    StatusText.Text = "Sẵn sàng"
+    StatusText.TextColor3 = T.SubText
+    StatusText.TextSize = 11
+    StatusText.Font = Enum.Font.Gotham
+    StatusText.TextXAlignment = Enum.TextXAlignment.Left
+    StatusText.Parent = bringCard
+
+    local bringBtn = AddButton(bringCard, "🧲 Bring All Items", T.Accent, function()
+        Collection.BringAll(function(msg)
+            StatusText.Text = msg
+        end)
+    end)
+    bringBtn.Position = UDim2.new(0, 10, 0, 16)
+    bringBtn.Size = UDim2.new(1, -20, 0, 28)
+
+    -- Keybind hint
+    local hint = Instance.new("TextLabel")
+    hint.Size = UDim2.new(1, 0, 0, 18)
+    hint.BackgroundTransparency = 1
+    hint.Text = "Phím tắt: [H] ẩn/hiện UI   [B] Bring All nhanh"
+    hint.TextColor3 = T.SubText
+    hint.TextSize = 10
+    hint.Font = Enum.Font.Gotham
+    hint.Parent = page
+end
+
+-- ─── TAB: ITEMS ──────────────────────────────────────────────────
+do
+    local page = AddPage("Items")
+    AddSectionLabel(page, "TÀI NGUYÊN")
+    local resCard = AddCard(page, 114)
+    AddToggle(resCard, "🪵 Wood (Gỗ)",     true, 4,  function(v) State.BringEnabled.Resources = v end)
+    AddToggle(resCard, "🪨 Stone (Đá)",    true, 38, function(v) end)  -- bạn có thể chia nhỏ hơn
+    AddToggle(resCard, "🐾 Pelt / Flint",  true, 72, function(v) end)
+
+    AddSectionLabel(page, "ĐỒ ĂN")
+    local foodCard = AddCard(page, 114)
+    AddToggle(foodCard, "🫐 Berries",  true, 4,  function(v) State.BringEnabled.Food = v end)
+    AddToggle(foodCard, "🥩 Meat",     true, 38, function(v) end)
+    AddToggle(foodCard, "🍄 Nấm / 💧 Nước", true, 72, function(v) end)
+
+    AddSectionLabel(page, "ĐỒ HIẾM")
+    local rareCard = AddCard(page, 76)
+    AddToggle(rareCard, "🔥 Infernal",    true, 4,  function(v) State.BringEnabled.Rare = v end)
+    AddToggle(rareCard, "📜 Blueprints",  true, 38, function(v) end)
+end
+
+-- ─── TAB: UTILITIES ──────────────────────────────────────────────
+do
+    local page = AddPage("Utilities")
+
+    AddSectionLabel(page, "ESP")
+    local espCard = AddCard(page, 76)
+    AddToggle(espCard, "🏷 Item ESP",    false, 4,  function(v)
+        State.ItemESP = v
+        if v then ESP.StartUpdateLoop() end
+    end)
+    AddToggle(espCard, "   Chỉ đồ hiếm", false, 38, function(v)
+        -- lọc ESP chỉ rare (tùy chỉnh thêm)
+    end)
+
+    AddSectionLabel(page, "AUTO-COLLECT")
+    local acCard = AddCard(page, 76)
+    AddToggle(acCard, "🧲 Auto-Collect (bán kính)", false, 4, function(v)
+        State.AutoCollect = v
+        if v then Collection.StartAutoCollect() end
+    end)
+    AddToggle(acCard, "   Chỉ khi đứng yên", false, 38, function(v) end)
+end
+
+-- ─── TAB: SETTINGS ───────────────────────────────────────────────
+do
+    local page = AddPage("Settings")
+
+    AddSectionLabel(page, "THÔNG SỐ")
+    local settCard = AddCard(page, 90)
+
+    local function NumRow(parent, label, val, yOff, key)
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, -20, 0, 28)
+        row.Position = UDim2.new(0, 10, 0, yOff)
+        row.BackgroundTransparency = 1
+        row.Parent = parent
+
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(0.65, 0, 1, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = label
+        lbl.TextColor3 = T.Text
+        lbl.TextSize = 12
+        lbl.Font = Enum.Font.Gotham
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Parent = row
+
+        local box = Instance.new("TextBox")
+        box.Size = UDim2.new(0.3, 0, 0.8, 0)
+        box.Position = UDim2.new(0.68, 0, 0.1, 0)
+        box.BackgroundColor3 = T.BG
+        box.Text = tostring(val)
+        box.TextColor3 = T.Accent
+        box.TextSize = 12
+box.Font = Enum.Font.GothamBold
+        box.BorderSizePixel = 0
+        box.Parent = row
+
+        local bc = Instance.new("UICorner")
+        bc.CornerRadius = UDim.new(0, 6)
+        bc.Parent = box
+
+        box.FocusLost:Connect(function()
+            local n = tonumber(box.Text)
+            if n then CONFIG[key] = n end
+        end)
+    end
+
+    NumRow(settCard, "Bring Delay (s)",    CONFIG.BringDelay,         4,  "BringDelay")
+    NumRow(settCard, "Auto-Collect Radius", CONFIG.AutoCollectRadius, 32,  "AutoCollectRadius")
+    NumRow(settCard, "Max ESP Distance",   CONFIG.MaxESPDistance,     60,  "MaxESPDistance")
+
+    AddSectionLabel(page, "PHÍM TẮT")
+    local keyCard = AddCard(page, 60)
+    local keyInfo = Instance.new("TextLabel")
+    keyInfo.Size = UDim2.new(1, -20, 1, 0)
+    keyInfo.Position = UDim2.new(0, 10, 0, 0)
+    keyInfo.BackgroundTransparency = 1
+    keyInfo.Text = "[H] Ẩn/hiện cửa sổ\n[B] Bring All nhanh\n[E] Toggle Item ESP"
+    keyInfo.TextColor3 = T.SubText
+    keyInfo.TextSize = 11
+    keyInfo.Font = Enum.Font.Gotham
+    keyInfo.TextXAlignment = Enum.TextXAlignment.Left
+    keyInfo.TextYAlignment = Enum.TextYAlignment.Center
+    keyInfo.Parent = keyCard
+end
+
+-- ── Activate first tab ─────────────────────────────────────────
+SetTab("Main")
+
+-- ================================================================
+--   KEYBINDS
+-- ================================================================
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.H then
+        Window.Visible = not Window.Visible
+    elseif input.KeyCode == Enum.KeyCode.B then
+        Collection.BringAll(function(msg)
+            if StatusText then StatusText.Text = msg end
+        end)
+    elseif input.KeyCode == Enum.KeyCode.E then
+        State.ItemESP = not State.ItemESP
+        if State.ItemESP then ESP.StartUpdateLoop() end
+    end
+end)
+
+-- ================================================================
+print("[SurvivalCollector] Loaded! H=toggle UI | B=Bring All | E=ESP")
+-- ================================================================
