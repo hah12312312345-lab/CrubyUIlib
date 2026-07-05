@@ -1,1 +1,2341 @@
+--[[
+	MYTH FRONT GOTHAM
+	Modern Luau UI Library
 
+	A premium Roblox interface library combining the structural clarity of
+	Linoria-style libraries with the polished, panel-driven aesthetic of
+	modern Dear ImGui.
+
+	Theme:
+		Primary        #E53935  (deep red)
+		Background     #111111  (matte black)
+		Panel          #181818  (secondary panels)
+		Border         #E53935  @ low alpha (thin 1px accents)
+
+	Usage:
+		local Myth = loadstring(game:HttpGet("...MythFrontGotham.lua"))()
+		local Window = Myth:CreateWindow({ Title = "MYTH FRONT GOTHAM", SubTitle = "MODERN LUAU UI LIBRARY" })
+		local Tab = Window:AddTab("Home", "home")
+		local Section = Tab:AddSection("Section Title")
+		local Group = Section:AddGroupBox("Groupbox")
+		Group:AddButton({ Text = "Button", Callback = function() end })
+
+	No external dependencies. Pure Roblox services only.
+]]
+
+--// SERVICES -----------------------------------------------------------
+local TweenService   = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local Players         = game:GetService("Players")
+local RunService      = game:GetService("RunService")
+local TextService     = game:GetService("TextService")
+
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+
+--// ROOT CONTAINER -------------------------------------------------------
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MythFrontGotham"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.DisplayOrder = 999
+ScreenGui.IgnoreGuiInset = true
+
+local ok, err = pcall(function()
+	if gethui then
+		ScreenGui.Parent = gethui()
+	else
+		ScreenGui.Parent = game:GetService("CoreGui")
+	end
+end)
+if not ok then
+	ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+end
+
+--// THEME ---------------------------------------------------------------
+local Theme = {
+	Primary        = Color3.fromHex("E53935"),
+	PrimaryDim     = Color3.fromHex("B92B27"),
+	Background     = Color3.fromHex("111111"),
+	Panel          = Color3.fromHex("181818"),
+	PanelLight     = Color3.fromHex("1F1F1F"),
+	Border         = Color3.fromHex("E53935"),
+	Stroke         = Color3.fromHex("2A2A2A"),
+	Text           = Color3.fromHex("F2F2F2"),
+	TextDim        = Color3.fromHex("9A9A9A"),
+	TextFaint      = Color3.fromHex("6B6B6B"),
+	Success        = Color3.fromHex("3DDC84"),
+	Info           = Color3.fromHex("3D8BFF"),
+	Warning        = Color3.fromHex("FFC53D"),
+	Error          = Color3.fromHex("FF4D4D"),
+
+	FontBold       = Enum.Font.GothamBold,
+	FontMedium     = Enum.Font.GothamMedium,
+	FontRegular    = Enum.Font.Gotham,
+
+	CornerRadius   = UDim.new(0, 8),
+	CornerRadiusSm = UDim.new(0, 6),
+	StrokeThickness = 1,
+}
+
+--// EASINGS ---------------------------------------------------------------
+local EASE = {
+	Smooth = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+	Fast   = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+	Pop    = TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+	Slide  = TweenInfo.new(0.32, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+	Resize = TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+}
+
+--// UTILITIES -------------------------------------------------------------
+local Util = {}
+
+function Util.Tween(instance, info, props)
+	local tween = TweenService:Create(instance, info, props)
+	tween:Play()
+	return tween
+end
+
+function Util.Create(className, props, children)
+	local inst = Instance.new(className)
+	for prop, value in pairs(props or {}) do
+		inst[prop] = value
+	end
+	for _, child in ipairs(children or {}) do
+		child.Parent = inst
+	end
+	return inst
+end
+
+function Util.Corner(radius)
+	return Util.Create("UICorner", { CornerRadius = radius or Theme.CornerRadius })
+end
+
+function Util.Stroke(color, thickness, transparency)
+	return Util.Create("UIStroke", {
+		Color = color or Theme.Stroke,
+		Thickness = thickness or Theme.StrokeThickness,
+		Transparency = transparency or 0,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	})
+end
+
+function Util.Pad(l, t, r, b)
+	return Util.Create("UIPadding", {
+		PaddingLeft = UDim.new(0, l or 0),
+		PaddingTop = UDim.new(0, t or 0),
+		PaddingRight = UDim.new(0, r or l or 0),
+		PaddingBottom = UDim.new(0, b or t or 0),
+	})
+end
+
+function Util.ListLayout(direction, padding, alignment)
+	return Util.Create("UIListLayout", {
+		FillDirection = direction or Enum.FillDirection.Vertical,
+		Padding = UDim.new(0, padding or 8),
+		HorizontalAlignment = alignment or Enum.HorizontalAlignment.Left,
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	})
+end
+
+--// SOFT SHADOW (9-slice image drop shadow) ------------------------------
+local SHADOW_IMAGE = "rbxassetid://5028857084" -- generic soft shadow, 9-slice
+local SHADOW_SLICE = Rect.new(24, 24, 276, 276)
+
+function Util.Shadow(parent, transparency, sizeOffset)
+	local shadow = Util.Create("ImageLabel", {
+		Name = "Shadow",
+		BackgroundTransparency = 1,
+		Image = SHADOW_IMAGE,
+		ImageColor3 = Color3.fromHex("000000"),
+		ImageTransparency = transparency or 0.55,
+		ScaleType = Enum.ScaleType.Slice,
+		SliceCenter = SHADOW_SLICE,
+		Size = UDim2.new(1, sizeOffset or 40, 1, sizeOffset or 40),
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		ZIndex = 0,
+	})
+	shadow.Parent = parent
+	return shadow
+end
+
+--// RIPPLE CLICK EFFECT ---------------------------------------------------
+function Util.Ripple(button, color)
+	button.ClipsDescendants = true
+	button.MouseButton1Down:Connect(function()
+		local pos = UserInputService:GetMouseLocation()
+		local abs = button.AbsolutePosition
+		local size = button.AbsoluteSize
+
+		local ripple = Util.Create("Frame", {
+			BackgroundColor3 = color or Theme.Primary,
+			BackgroundTransparency = 0.65,
+			BorderSizePixel = 0,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(0, pos.X - abs.X, 0, pos.Y - abs.Y - 36),
+			Size = UDim2.new(0, 0, 0, 0),
+			ZIndex = button.ZIndex + 1,
+		})
+		Util.Corner(UDim.new(1, 0)).Parent = ripple
+		ripple.Parent = button
+
+		local maxDim = math.max(size.X, size.Y) * 2.2
+		Util.Tween(ripple, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Size = UDim2.new(0, maxDim, 0, maxDim),
+			BackgroundTransparency = 1,
+		})
+		task.delay(0.5, function()
+			ripple:Destroy()
+		end)
+	end)
+end
+
+--// HOVER STATE HELPER -----------------------------------------------------
+function Util.Hoverable(instance, normalProps, hoverProps, info)
+	info = info or EASE.Fast
+	instance.MouseEnter:Connect(function()
+		Util.Tween(instance, info, hoverProps)
+	end)
+	instance.MouseLeave:Connect(function()
+		Util.Tween(instance, info, normalProps)
+	end)
+end
+
+--// DRAGGABLE (generic, used by window header) ----------------------------
+function Util.MakeDraggable(handle, target)
+	local dragging = false
+	local dragStart, startPos
+
+	handle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = target.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+				end
+			end)
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = input.Position - dragStart
+			target.Position = UDim2.new(
+				startPos.X.Scale, startPos.X.Offset + delta.X,
+				startPos.Y.Scale, startPos.Y.Offset + delta.Y
+			)
+		end
+	end)
+end
+
+--// RESPONSIVE HELPERS ------------------------------------------------------
+-- The window is sized proportionally to viewport, clamped between a min and
+-- max, so it behaves on phone / tablet / PC without ever stretching oddly.
+local function GetViewportSize()
+	local camera = workspace.CurrentCamera
+	return camera and camera.ViewportSize or Vector2.new(1280, 720)
+end
+
+local function ComputeBaseWindowSize()
+	local vp = GetViewportSize()
+	-- Vertical layout: height significantly larger than width.
+	local w = math.clamp(vp.X * 0.30, 300, 460)
+	local h = math.clamp(vp.Y * 0.82, 460, 760)
+	-- On very small (phone) viewports, use a larger share of the screen.
+	if vp.X < 500 then
+		w = math.clamp(vp.X * 0.92, 260, 420)
+		h = math.clamp(vp.Y * 0.86, 420, 700)
+	end
+	return Vector2.new(w, h)
+end
+
+local MIN_SIZE = Vector2.new(280, 380)
+local MAX_SIZE = Vector2.new(720, 980)
+
+--// LIBRARY ROOT -----------------------------------------------------------
+local Myth = {}
+Myth.__index = Myth
+Myth.Theme = Theme
+Myth.Util = Util
+Myth.Flags = {}          -- global flag store (config manager reads/writes this)
+Myth.Windows = {}
+Myth.NotificationHolder = nil
+Myth.ActiveWindow = nil
+
+--// NOTIFICATION HOLDER (created lazily, shared across windows) -----------
+local function EnsureNotificationHolder()
+	if Myth.NotificationHolder then return Myth.NotificationHolder end
+
+	local holder = Util.Create("Frame", {
+		Name = "NotificationHolder",
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(1, 1),
+		Position = UDim2.new(1, -20, 1, -20),
+		Size = UDim2.new(0, 320, 1, -40),
+		ZIndex = 500,
+	})
+	Util.Create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Vertical,
+		VerticalAlignment = Enum.VerticalAlignment.Bottom,
+		HorizontalAlignment = Enum.HorizontalAlignment.Right,
+		Padding = UDim.new(0, 10),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = holder
+	holder.Parent = ScreenGui
+
+	Myth.NotificationHolder = holder
+	return holder
+end
+
+--// NOTIFY -----------------------------------------------------------------
+local NOTIFY_ICONS = {
+	Success = { Icon = "rbxassetid://6031094678", Color = Theme.Success },
+	Info    = { Icon = "rbxassetid://6031094667", Color = Theme.Info },
+	Warning = { Icon = "rbxassetid://6031071053", Color = Theme.Warning },
+	Error   = { Icon = "rbxassetid://6031071057", Color = Theme.Error },
+}
+
+function Myth:Notify(opts)
+	opts = opts or {}
+	local kind = opts.Type or "Info"
+	local meta = NOTIFY_ICONS[kind] or NOTIFY_ICONS.Info
+	local holder = EnsureNotificationHolder()
+
+	local card = Util.Create("Frame", {
+		Name = "Notification",
+		BackgroundColor3 = Theme.Panel,
+		Size = UDim2.new(1, 0, 0, 62),
+		ClipsDescendants = true,
+		LayoutOrder = -os.clock() * 1000,
+	})
+	Util.Corner(Theme.CornerRadiusSm).Parent = card
+	Util.Stroke(meta.Color, 1, 0.35).Parent = card
+	Util.Shadow(card, 0.6, 24)
+
+	local accent = Util.Create("Frame", {
+		BackgroundColor3 = meta.Color,
+		BorderSizePixel = 0,
+		Size = UDim2.new(0, 3, 1, 0),
+	})
+	Util.Corner(UDim.new(0, 2)).Parent = accent
+	accent.Parent = card
+
+	local icon = Util.Create("ImageLabel", {
+		BackgroundTransparency = 1,
+		Image = meta.Icon,
+		ImageColor3 = meta.Color,
+		Size = UDim2.new(0, 20, 0, 20),
+		Position = UDim2.new(0, 16, 0, 12),
+	})
+	icon.Parent = card
+
+	local title = Util.Create("TextLabel", {
+		BackgroundTransparency = 1,
+		Text = opts.Title or "Notification",
+		Font = Theme.FontBold,
+		TextSize = 14,
+		TextColor3 = meta.Color,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Position = UDim2.new(0, 46, 0, 8),
+		Size = UDim2.new(1, -80, 0, 18),
+	})
+	title.Parent = card
+
+	local desc = Util.Create("TextLabel", {
+		BackgroundTransparency = 1,
+		Text = opts.Content or "",
+		Font = Theme.FontRegular,
+		TextSize = 12,
+		TextColor3 = Theme.TextDim,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextWrapped = true,
+		Position = UDim2.new(0, 46, 0, 27),
+		Size = UDim2.new(1, -80, 0, 28),
+	})
+	desc.Parent = card
+
+	local closeBtn = Util.Create("TextButton", {
+		BackgroundTransparency = 1,
+		Text = "\226\156\149",
+		Font = Theme.FontMedium,
+		TextSize = 14,
+		TextColor3 = Theme.TextFaint,
+		Size = UDim2.new(0, 24, 0, 24),
+		Position = UDim2.new(1, -30, 0, 8),
+	})
+	closeBtn.Parent = card
+
+	card.Parent = holder
+
+	-- Slide + fade in
+	card.Position = UDim2.new(1, 60, 0, 0)
+	card.BackgroundTransparency = 1
+	icon.ImageTransparency = 1
+	title.TextTransparency = 1
+	desc.TextTransparency = 1
+	Util.Tween(card, EASE.Slide, { Position = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 0 })
+	Util.Tween(icon, EASE.Slide, { ImageTransparency = 0 })
+	Util.Tween(title, EASE.Slide, { TextTransparency = 0 })
+	Util.Tween(desc, EASE.Slide, { TextTransparency = 0 })
+
+	local function dismiss()
+		local slide = Util.Tween(card, EASE.Smooth, { Position = UDim2.new(1, 60, 0, 0), BackgroundTransparency = 1 })
+		Util.Tween(icon, EASE.Smooth, { ImageTransparency = 1 })
+		Util.Tween(title, EASE.Smooth, { TextTransparency = 1 })
+		Util.Tween(desc, EASE.Smooth, { TextTransparency = 1 })
+		slide.Completed:Wait()
+		card:Destroy()
+	end
+
+	closeBtn.MouseButton1Click:Connect(dismiss)
+	task.delay(opts.Duration or 4.5, function()
+		if card.Parent then
+			pcall(dismiss)
+		end
+	end)
+end
+
+--// WINDOW ===================================================================
+local Window = {}
+Window.__index = Window
+
+function Myth:CreateWindow(opts)
+	opts = opts or {}
+	local title = opts.Title or "MYTH FRONT GOTHAM"
+	local subTitle = opts.SubTitle or "MODERN LUAU UI LIBRARY"
+
+	local baseSize = ComputeBaseWindowSize()
+
+	local Main = Util.Create("Frame", {
+		Name = "MythWindow",
+		BackgroundColor3 = Theme.Background,
+		Size = UDim2.fromOffset(baseSize.X, baseSize.Y),
+		Position = UDim2.new(0.5, -baseSize.X / 2, 0.5, -baseSize.Y / 2),
+		ClipsDescendants = false,
+		ZIndex = 10,
+	})
+	Util.Corner(UDim.new(0, 8)).Parent = Main
+	Util.Stroke(Theme.Border, 1, 0.25).Parent = Main
+	Util.Shadow(Main, 0.5, 50)
+
+	local Clip = Util.Create("Frame", {
+		Name = "Clip",
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 1, 0),
+		ClipsDescendants = true,
+		ZIndex = 10,
+	})
+	Util.Corner(UDim.new(0, 8)).Parent = Clip
+	Clip.Parent = Main
+
+	--// HEADER -----------------------------------------------------------
+	local HEADER_HEIGHT = 44
+	local Header = Util.Create("Frame", {
+		Name = "Header",
+		BackgroundColor3 = Theme.Panel,
+		Size = UDim2.new(1, 0, 0, HEADER_HEIGHT),
+		ZIndex = 12,
+	})
+	Util.Create("Frame", {
+		BackgroundColor3 = Theme.Border,
+		BackgroundTransparency = 0.7,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 0, 1),
+		Position = UDim2.new(0, 0, 1, -1),
+	}).Parent = Header
+	Header.Parent = Clip
+
+	local LogoWrap = Util.Create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0, 160, 1, 0),
+		Position = UDim2.new(0, 14, 0, 0),
+	})
+	Util.Create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 5),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = LogoWrap
+	Util.Create("TextLabel", {
+		BackgroundTransparency = 1,
+		Text = "MYTH",
+		Font = Theme.FontBold,
+		TextSize = 15,
+		TextColor3 = Theme.Primary,
+		Size = UDim2.new(0, 46, 1, 0),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		LayoutOrder = 1,
+	}).Parent = LogoWrap
+	Util.Create("TextLabel", {
+		BackgroundTransparency = 1,
+		Text = "FRONT GOTHAM",
+		Font = Theme.FontMedium,
+		TextSize = 13,
+		TextColor3 = Theme.Text,
+		Size = UDim2.new(0, 110, 1, 0),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		LayoutOrder = 2,
+	}).Parent = LogoWrap
+	LogoWrap.Parent = Header
+
+	local SearchBar = Util.Create("Frame", {
+		Name = "SearchBar",
+		BackgroundColor3 = Theme.PanelLight,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		Size = UDim2.new(0.42, 0, 0, 26),
+		ZIndex = 12,
+	})
+	Util.Corner(UDim.new(0, 6)).Parent = SearchBar
+	Util.Stroke(Theme.Stroke, 1, 0.3).Parent = SearchBar
+	Util.Create("ImageLabel", {
+		BackgroundTransparency = 1,
+		Image = "rbxassetid://6031154871",
+		ImageColor3 = Theme.TextFaint,
+		Size = UDim2.new(0, 14, 0, 14),
+		Position = UDim2.new(0, 8, 0.5, -7),
+	}).Parent = SearchBar
+	local SearchBox = Util.Create("TextBox", {
+		BackgroundTransparency = 1,
+		Text = "",
+		PlaceholderText = "Search...",
+		PlaceholderColor3 = Theme.TextFaint,
+		Font = Theme.FontRegular,
+		TextSize = 12,
+		TextColor3 = Theme.Text,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ClearTextOnFocus = false,
+		Size = UDim2.new(1, -34, 1, 0),
+		Position = UDim2.new(0, 28, 0, 0),
+		ZIndex = 13,
+	})
+	SearchBox.Parent = SearchBar
+	SearchBar.Parent = Header
+
+	local Controls = Util.Create("Frame", {
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -10, 0.5, 0),
+		Size = UDim2.new(0, 90, 0, 26),
+		ZIndex = 12,
+	})
+	Util.Create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		HorizontalAlignment = Enum.HorizontalAlignment.Right,
+		Padding = UDim.new(0, 4),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = Controls
+
+	local function MakeControlButton(glyph, hoverColor, layoutOrder)
+		local btn = Util.Create("TextButton", {
+			BackgroundColor3 = Theme.PanelLight,
+			BackgroundTransparency = 0.3,
+			Text = glyph,
+			Font = Theme.FontMedium,
+			TextSize = 13,
+			TextColor3 = Theme.TextDim,
+			Size = UDim2.new(0, 26, 0, 26),
+			LayoutOrder = layoutOrder,
+			AutoButtonColor = false,
+		})
+		Util.Corner(UDim.new(0, 6)).Parent = btn
+		Util.Hoverable(btn,
+			{ BackgroundColor3 = Theme.PanelLight, TextColor3 = Theme.TextDim },
+			{ BackgroundColor3 = hoverColor, TextColor3 = Theme.Text }
+		)
+		btn.Parent = Controls
+		return btn
+	end
+
+	local MinimizeBtn = MakeControlButton("\226\128\148", Theme.PanelLight, 1)
+	local MaximizeBtn = MakeControlButton("\226\150\161", Theme.PanelLight, 2)
+	local CloseBtn    = MakeControlButton("\226\156\149", Theme.Primary, 3)
+	Controls.Parent = Header
+
+	--// TAB BAR ------------------------------------------------------------
+	local TAB_BAR_HEIGHT = 40
+	local TabBar = Util.Create("Frame", {
+		Name = "TabBar",
+		BackgroundColor3 = Theme.Background,
+		Size = UDim2.new(1, 0, 0, TAB_BAR_HEIGHT),
+		Position = UDim2.new(0, 0, 0, HEADER_HEIGHT),
+		ZIndex = 11,
+	})
+	Util.Create("Frame", {
+		BackgroundColor3 = Theme.Border,
+		BackgroundTransparency = 0.75,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 0, 1),
+		Position = UDim2.new(0, 0, 1, -1),
+	}).Parent = TabBar
+
+	local TabButtonHolder = Util.Create("ScrollingFrame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, -8, 1, 0),
+		Position = UDim2.new(0, 4, 0, 0),
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.X,
+		ScrollBarThickness = 0,
+		ScrollingDirection = Enum.ScrollingDirection.X,
+		ZIndex = 11,
+	})
+	Util.Create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 4),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = TabButtonHolder
+	Util.Pad(4, 0, 4, 0).Parent = TabButtonHolder
+	TabButtonHolder.Parent = TabBar
+	TabBar.Parent = Clip
+
+	--// CONTENT AREA --------------------------------------------------------
+	local ContentArea = Util.Create("Frame", {
+		Name = "ContentArea",
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 1, -(HEADER_HEIGHT + TAB_BAR_HEIGHT)),
+		Position = UDim2.new(0, 0, 0, HEADER_HEIGHT + TAB_BAR_HEIGHT),
+		ZIndex = 10,
+	})
+	ContentArea.Parent = Clip
+
+	Main.Parent = ScreenGui
+
+	--// DRAG WINDOW (via header) --------------------------------------------
+	do
+		local dragging, dragStart, startPos = false, nil, nil
+		Header.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = true
+				dragStart = input.Position
+				startPos = Main.Position
+				local conn
+				conn = input.Changed:Connect(function()
+					if input.UserInputState == Enum.UserInputState.End then
+						dragging = false
+						conn:Disconnect()
+					end
+				end)
+			end
+		end)
+		UserInputService.InputChanged:Connect(function(input)
+			if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+				local delta = input.Position - dragStart
+				Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+			end
+		end)
+	end
+
+	--// WINDOW OBJECT --------------------------------------------------------
+	local self = setmetatable({}, Window)
+	self.Main = Main
+	self.Header = Header
+	self.TabBar = TabBar
+	self.TabButtonHolder = TabButtonHolder
+	self.ContentArea = ContentArea
+	self.Tabs = {}
+	self.TabButtons = {}
+	self.ActiveTab = nil
+	self.Minimized = false
+	self.HEADER_HEIGHT = HEADER_HEIGHT
+	self.TAB_BAR_HEIGHT = TAB_BAR_HEIGHT
+	self.Theme = Theme
+	self.MinSize = MIN_SIZE
+	self.MaxSize = MAX_SIZE
+
+	--// MINIMIZE / MAXIMIZE / CLOSE -----------------------------------------
+	local expandedSize = Main.Size
+	MinimizeBtn.MouseButton1Click:Connect(function()
+		self.Minimized = not self.Minimized
+		if self.Minimized then
+			expandedSize = Main.Size
+			Util.Tween(Main, EASE.Resize, { Size = UDim2.new(0, Main.AbsoluteSize.X, 0, HEADER_HEIGHT) })
+		else
+			Util.Tween(Main, EASE.Resize, { Size = expandedSize })
+		end
+	end)
+
+	local maximized = false
+	local preMaxSize, preMaxPos
+	MaximizeBtn.MouseButton1Click:Connect(function()
+		maximized = not maximized
+		if maximized then
+			preMaxSize, preMaxPos = Main.Size, Main.Position
+			local vp = GetViewportSize()
+			Util.Tween(Main, EASE.Resize, {
+				Size = UDim2.fromOffset(vp.X * 0.6, vp.Y * 0.9),
+				Position = UDim2.new(0.5, -(vp.X * 0.3), 0.5, -(vp.Y * 0.45)),
+			})
+		else
+			Util.Tween(Main, EASE.Resize, { Size = preMaxSize, Position = preMaxPos })
+		end
+	end)
+
+	CloseBtn.MouseButton1Click:Connect(function()
+		local t = Util.Tween(Main, EASE.Fast, { Size = UDim2.new(Main.Size.X.Scale, Main.Size.X.Offset, 0, 0) })
+		t.Completed:Wait()
+		Main.Visible = false
+	end)
+
+	--// RESPOND TO VIEWPORT CHANGES (responsive scaling) --------------------
+	local camera = workspace.CurrentCamera
+	if camera then
+		camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+			if self.Minimized or maximized then return end
+			local newBase = ComputeBaseWindowSize()
+			Util.Tween(Main, EASE.Resize, { Size = UDim2.fromOffset(newBase.X, newBase.Y) })
+		end)
+	end
+
+	Myth.ActiveWindow = self
+	table.insert(Myth.Windows, self)
+
+	--// RESIZE HANDLE (floating "}" icon, bottom-right) ----------------------
+	self:_AttachResizeHandle()
+
+	return self
+end
+
+--[[
+	Floating resize handle.
+
+	Idle:    small, dark gray, semi-transparent "}" glyph sitting just
+	         outside the window's bottom-right corner.
+	Hover:   smoothly enlarges, turns primary red, gains a soft glow.
+	Drag:    follows the pointer; window width/height update live,
+	         clamped to Min/Max, content re-flows automatically because
+	         everything downstream is built with Scale/percentage sizing.
+	Release: settles into place with a soft easing tween (no snapping).
+]]
+function Window:_AttachResizeHandle()
+	local Main = self.Main
+	local MinSize, MaxSize = self.MinSize, self.MaxSize
+
+	local Handle = Util.Create("TextButton", {
+		Name = "ResizeHandle",
+		Text = "}",
+		Font = Theme.FontBold,
+		TextSize = 16,
+		TextColor3 = Color3.fromHex("6B6B6B"),
+		BackgroundColor3 = Theme.Panel,
+		BackgroundTransparency = 0.35,
+		AutoButtonColor = false,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(1, 4, 1, 4),
+		Size = UDim2.new(0, 22, 0, 22),
+		ZIndex = 50,
+	})
+	Util.Corner(UDim.new(1, 0)).Parent = Handle
+	local handleStroke = Util.Stroke(Theme.Stroke, 1, 0.4)
+	handleStroke.Parent = Handle
+
+	local glow = Util.Create("ImageLabel", {
+		Name = "Glow",
+		BackgroundTransparency = 1,
+		Image = "rbxassetid://5028857084",
+		ImageColor3 = Theme.Primary,
+		ImageTransparency = 1,
+		ScaleType = Enum.ScaleType.Slice,
+		SliceCenter = SHADOW_SLICE,
+		Size = UDim2.new(1, 30, 1, 30),
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		ZIndex = 49,
+	})
+	glow.Parent = Handle
+	Handle.Parent = Main
+
+	local IDLE = {
+		Size = UDim2.new(0, 22, 0, 22),
+		BackgroundColor3 = Theme.Panel,
+		TextColor3 = Color3.fromHex("6B6B6B"),
+	}
+	local HOVER = {
+		Size = UDim2.new(0, 28, 0, 28),
+		BackgroundColor3 = Theme.Primary,
+		TextColor3 = Theme.Text,
+	}
+
+	local hovering, dragging = false, false
+
+	local function applyIdle()
+		Util.Tween(Handle, EASE.Smooth, IDLE)
+		Util.Tween(glow, EASE.Smooth, { ImageTransparency = 1 })
+		Util.Tween(handleStroke, EASE.Smooth, { Transparency = 0.4 })
+	end
+
+	local function applyHover()
+		Util.Tween(Handle, EASE.Pop, HOVER)
+		Util.Tween(glow, EASE.Smooth, { ImageTransparency = 0.55 })
+		Util.Tween(handleStroke, EASE.Smooth, { Transparency = 0, Color = Theme.Primary })
+	end
+
+	Handle.MouseEnter:Connect(function()
+		hovering = true
+		applyHover()
+	end)
+	Handle.MouseLeave:Connect(function()
+		hovering = false
+		if not dragging then applyIdle() end
+	end)
+
+	local dragStartPos, startSize
+	Handle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStartPos = input.Position
+			startSize = Main.Size
+			applyHover()
+
+			local conn
+			conn = input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+					conn:Disconnect()
+					-- Soft settle animation on release (re-affirms current size with easing)
+					Util.Tween(Main, EASE.Resize, { Size = Main.Size })
+					if not hovering then applyIdle() end
+				end
+			end)
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = input.Position - dragStartPos
+
+			local newW = math.clamp(startSize.X.Offset + delta.X, MinSize.X, MaxSize.X)
+			local newH = math.clamp(startSize.Y.Offset + delta.Y, MinSize.Y, MaxSize.Y)
+
+			-- Direct, real-time assignment (no tween while actively dragging,
+			-- so the frame tracks the pointer with zero lag); layout below
+			-- re-flows automatically since children use Scale-based sizing.
+			Main.Size = UDim2.new(0, newW, 0, newH)
+		end
+	end)
+
+	-- Keep handle glued to the bottom-right corner regardless of resizing.
+	Main:GetPropertyChangedSignal("Size"):Connect(function()
+		-- Position is anchored via UDim2.new(1,4,1,4) with AnchorPoint(0.5,0.5)
+		-- relative to Main, so no manual repositioning is required; this hook
+		-- is reserved for any future layout-dependent behavior.
+	end)
+
+	self.ResizeHandle = Handle
+end
+
+--// TAB =======================================================================
+local Tab = {}
+Tab.__index = Tab
+
+local TAB_ICONS = {
+	home    = "rbxassetid://6031280882",
+	layers  = "rbxassetid://6031280935",
+	grid    = "rbxassetid://6031280858",
+	cube    = "rbxassetid://6031280865",
+	star    = "rbxassetid://6031280907",
+	gear    = "rbxassetid://6031280892",
+}
+
+function Window:AddTab(name, icon)
+	local index = #self.Tabs + 1
+
+	-- Tab button (in the horizontal tab bar)
+	local TabBtn = Util.Create("TextButton", {
+		Name = name .. "TabButton",
+		BackgroundColor3 = Theme.Panel,
+		BackgroundTransparency = index == 1 and 0 or 1,
+		AutoButtonColor = false,
+		Text = "",
+		Size = UDim2.new(0, 0, 1, -6),
+		AutomaticSize = Enum.AutomaticSize.X,
+		LayoutOrder = index,
+	})
+	Util.Corner(UDim.new(0, 6)).Parent = TabBtn
+	Util.Pad(12, 0, 12, 0).Parent = TabBtn
+
+	local TabInner = Util.Create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0, 0, 1, 0),
+		AutomaticSize = Enum.AutomaticSize.X,
+	})
+	Util.Create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = TabInner
+	TabInner.Parent = TabBtn
+
+	local iconId = icon and TAB_ICONS[icon]
+	local TabIcon
+	if iconId then
+		TabIcon = Util.Create("ImageLabel", {
+			BackgroundTransparency = 1,
+			Image = iconId,
+			ImageColor3 = index == 1 and Theme.Primary or Theme.TextFaint,
+			Size = UDim2.new(0, 14, 0, 14),
+			LayoutOrder = 1,
+		})
+		TabIcon.Parent = TabInner
+	end
+
+	local TabLabel = Util.Create("TextLabel", {
+		BackgroundTransparency = 1,
+		Text = string.upper(name),
+		Font = Theme.FontBold,
+		TextSize = 12,
+		TextColor3 = index == 1 and Theme.Primary or Theme.TextFaint,
+		Size = UDim2.new(0, 0, 1, 0),
+		AutomaticSize = Enum.AutomaticSize.X,
+		LayoutOrder = 2,
+	})
+	TabLabel.Parent = TabInner
+
+	-- Bottom active-indicator bar
+	local Indicator = Util.Create("Frame", {
+		BackgroundColor3 = Theme.Primary,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, 0),
+		Size = UDim2.new(index == 1 and 0.7 or 0, 0, 0, 2),
+	})
+	Util.Corner(UDim.new(1, 0)).Parent = Indicator
+	Indicator.Parent = TabBtn
+
+	TabBtn.Parent = self.TabButtonHolder
+
+	-- Tab content page
+	local Page = Util.Create("ScrollingFrame", {
+		Name = name .. "Page",
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 1, 0),
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = Theme.Primary,
+		ScrollBarImageTransparency = 0.4,
+		Visible = index == 1,
+		ZIndex = 10,
+	})
+	Util.Pad(14, 12, 14, 14).Parent = Page
+	Util.Create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Vertical,
+		Padding = UDim.new(0, 14),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = Page
+	Page.Parent = self.ContentArea
+
+	local tabObj = setmetatable({}, Tab)
+	tabObj.Window = self
+	tabObj.Name = name
+	tabObj.Button = TabBtn
+	tabObj.Label = TabLabel
+	tabObj.Icon = TabIcon
+	tabObj.Indicator = Indicator
+	tabObj.Page = Page
+	tabObj.Sections = {}
+
+	table.insert(self.Tabs, tabObj)
+	self.TabButtons[name] = TabBtn
+	if index == 1 then self.ActiveTab = tabObj end
+
+	TabBtn.MouseButton1Click:Connect(function()
+		self:SelectTab(tabObj)
+	end)
+
+	Util.Hoverable(TabBtn,
+		{},
+		{},
+		EASE.Fast
+	)
+	-- Custom hover: only affect label/icon color when not active
+	TabBtn.MouseEnter:Connect(function()
+		if self.ActiveTab ~= tabObj then
+			Util.Tween(TabLabel, EASE.Fast, { TextColor3 = Theme.TextDim })
+			if TabIcon then Util.Tween(TabIcon, EASE.Fast, { ImageColor3 = Theme.TextDim }) end
+		end
+	end)
+	TabBtn.MouseLeave:Connect(function()
+		if self.ActiveTab ~= tabObj then
+			Util.Tween(TabLabel, EASE.Fast, { TextColor3 = Theme.TextFaint })
+			if TabIcon then Util.Tween(TabIcon, EASE.Fast, { ImageColor3 = Theme.TextFaint }) end
+		end
+	end)
+
+	return tabObj
+end
+
+--// Animated tab switching --------------------------------------------------
+function Window:SelectTab(tabObj)
+	if self.ActiveTab == tabObj then return end
+	local previous = self.ActiveTab
+	self.ActiveTab = tabObj
+
+	if previous then
+		Util.Tween(previous.Button, EASE.Fast, { BackgroundTransparency = 1 })
+		Util.Tween(previous.Label, EASE.Fast, { TextColor3 = Theme.TextFaint })
+		if previous.Icon then Util.Tween(previous.Icon, EASE.Fast, { ImageColor3 = Theme.TextFaint }) end
+		Util.Tween(previous.Indicator, EASE.Fast, { Size = UDim2.new(0, 0, 0, 2) })
+
+		-- swap visibility immediately; the incoming page handles the
+		-- animated transition (slide + fade) so the switch still feels smooth
+		previous.Page.Visible = false
+	end
+
+	Util.Tween(tabObj.Button, EASE.Fast, { BackgroundTransparency = 0 })
+	Util.Tween(tabObj.Label, EASE.Fast, { TextColor3 = Theme.Primary })
+	if tabObj.Icon then Util.Tween(tabObj.Icon, EASE.Fast, { ImageColor3 = Theme.Primary }) end
+	Util.Tween(tabObj.Indicator, EASE.Pop, { Size = UDim2.new(0.7, 0, 0, 2) })
+
+	-- Slide-in transition for the newly active page
+	local page = tabObj.Page
+	page.Visible = true
+	page.Position = UDim2.new(0.03, 0, 0, 0)
+	Util.Tween(page, EASE.Slide, { Position = UDim2.new(0, 0, 0, 0) })
+end
+
+--// SECTION ===================================================================
+local Section = {}
+Section.__index = Section
+
+function Tab:AddSection(title)
+	local SectionFrame = Util.Create("Frame", {
+		Name = "Section",
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = #self.Sections + 1,
+	})
+	Util.Create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Vertical,
+		Padding = UDim.new(0, 10),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = SectionFrame
+
+	if title then
+		local Title = Util.Create("TextLabel", {
+			Name = "SectionTitle",
+			BackgroundTransparency = 1,
+			Text = string.upper(title),
+			Font = Theme.FontBold,
+			TextSize = 12,
+			TextColor3 = Theme.Primary,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Size = UDim2.new(1, 0, 0, 16),
+			LayoutOrder = 0,
+		})
+		Title.Parent = SectionFrame
+	end
+
+	-- Row that holds groupboxes side by side (responsive: wraps via UIGridLayout-like scale columns)
+	local Row = Util.Create("Frame", {
+		Name = "GroupRow",
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = 1,
+	})
+	Util.Create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		Padding = UDim.new(0, 12),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		VerticalAlignment = Enum.VerticalAlignment.Top,
+	}).Parent = Row
+	Row.Parent = SectionFrame
+
+	SectionFrame.Parent = self.Page
+
+	local sectionObj = setmetatable({}, Section)
+	sectionObj.Frame = SectionFrame
+	sectionObj.Row = Row
+	sectionObj.GroupBoxes = {}
+	table.insert(self.Sections, sectionObj)
+	return sectionObj
+end
+
+--// GROUPBOX ===================================================================
+local GroupBox = {}
+GroupBox.__index = GroupBox
+
+function Section:AddGroupBox(title, columnWeight)
+	local count = #self.GroupBoxes + 1
+
+	local Box = Util.Create("Frame", {
+		Name = "GroupBox",
+		BackgroundColor3 = Theme.Panel,
+		Size = UDim2.new(columnWeight or 1, count > 1 and -6 or 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = count,
+	})
+	Util.Corner(Theme.CornerRadiusSm).Parent = Box
+	Util.Stroke(Theme.Stroke, 1, 0.25).Parent = Box
+	Util.Pad(12, 10, 12, 12).Parent = Box
+
+	local Layout = Util.Create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Vertical,
+		Padding = UDim.new(0, 10),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	})
+	Layout.Parent = Box
+
+	if title then
+		local Title = Util.Create("TextLabel", {
+			Name = "GroupTitle",
+			BackgroundTransparency = 1,
+			Text = string.upper(title),
+			Font = Theme.FontBold,
+			TextSize = 11,
+			TextColor3 = Theme.TextDim,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Size = UDim2.new(1, 0, 0, 14),
+			LayoutOrder = 0,
+		})
+		Title.Parent = Box
+	end
+
+	Box.Parent = self.Row
+
+	local boxObj = setmetatable({}, GroupBox)
+	boxObj.Frame = Box
+	boxObj.Order = 0
+	table.insert(self.GroupBoxes, boxObj)
+	return boxObj
+end
+
+--// Convenience: components can also be added directly to a Section
+-- (renders full width, useful for Notification preview blocks, etc.)
+function Section:AddGroupBoxFullWidth(title)
+	return self:AddGroupBox(title, 1)
+end
+
+--// ============================================================================
+--// COMPONENTS
+--// ============================================================================
+local function NextOrder(box)
+	box.Order = box.Order + 1
+	return box.Order
+end
+
+--// LABEL ----------------------------------------------------------------------
+function GroupBox:AddLabel(text)
+	local Label = Util.Create("TextLabel", {
+		BackgroundTransparency = 1,
+		Text = text or "Label",
+		Font = Theme.FontMedium,
+		TextSize = 13,
+		TextColor3 = Theme.Text,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Size = UDim2.new(1, 0, 0, 16),
+		LayoutOrder = NextOrder(self),
+	})
+	Label.Parent = self.Frame
+
+	local api = {}
+	function api:SetText(newText)
+		Label.Text = newText
+	end
+	return api
+end
+
+--// PARAGRAPH ------------------------------------------------------------------
+function GroupBox:AddParagraph(title, content)
+	local Wrap = Util.Create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = NextOrder(self),
+	})
+	Util.Create("UIListLayout", {
+		Padding = UDim.new(0, 3),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = Wrap
+
+	if title then
+		Util.Create("TextLabel", {
+			BackgroundTransparency = 1,
+			Text = title,
+			Font = Theme.FontBold,
+			TextSize = 13,
+			TextColor3 = Theme.Text,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Size = UDim2.new(1, 0, 0, 16),
+			LayoutOrder = 1,
+		}).Parent = Wrap
+	end
+
+	local Body = Util.Create("TextLabel", {
+		BackgroundTransparency = 1,
+		Text = content or "",
+		Font = Theme.FontRegular,
+		TextSize = 12,
+		TextColor3 = Theme.TextDim,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		TextWrapped = true,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = 2,
+	})
+	Body.Parent = Wrap
+	Wrap.Parent = self.Frame
+
+	local api = {}
+	function api:SetText(newText)
+		Body.Text = newText
+	end
+	return api
+end
+
+--// BUTTON ---------------------------------------------------------------------
+local BUTTON_VARIANTS = {
+	Primary   = { Bg = Theme.Primary, BgHover = Theme.PrimaryDim, Text = Color3.fromHex("FFFFFF"), Border = false },
+	Secondary = { Bg = Theme.PanelLight, BgHover = Color3.fromHex("262626"), Text = Theme.Text, Border = false },
+	Outline   = { Bg = Theme.Panel, BgHover = Theme.Panel, Text = Theme.Primary, Border = true },
+}
+
+function GroupBox:AddButton(opts)
+	opts = opts or {}
+	local variant = BUTTON_VARIANTS[opts.Variant or "Primary"] or BUTTON_VARIANTS.Primary
+	local callback = opts.Callback or function() end
+
+	local Btn = Util.Create("TextButton", {
+		BackgroundColor3 = variant.Bg,
+		AutoButtonColor = false,
+		Text = opts.Text or "Button",
+		Font = Theme.FontBold,
+		TextSize = 13,
+		TextColor3 = variant.Text,
+		Size = UDim2.new(1, 0, 0, 34),
+		LayoutOrder = NextOrder(self),
+	})
+	Util.Corner(UDim.new(0, 6)).Parent = Btn
+	if variant.Border then
+		Util.Stroke(Theme.Primary, 1, 0.2).Parent = Btn
+	end
+	Util.Ripple(Btn, opts.Variant == "Primary" and Color3.fromHex("FFFFFF") or Theme.Primary)
+
+	Util.Hoverable(Btn,
+		{ BackgroundColor3 = variant.Bg },
+		{ BackgroundColor3 = variant.BgHover }
+	)
+
+	Btn.MouseButton1Click:Connect(function()
+		callback()
+	end)
+
+	local api = { Instance = Btn }
+	function api:SetText(t) Btn.Text = t end
+	return api
+end
+
+--// TOGGLE ---------------------------------------------------------------------
+function GroupBox:AddToggle(opts)
+	opts = opts or {}
+	local flag = opts.Flag
+	local default = opts.Default or false
+	local callback = opts.Callback or function() end
+
+	local Row = Util.Create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 22),
+		LayoutOrder = NextOrder(self),
+	})
+
+	local Label = Util.Create("TextLabel", {
+		BackgroundTransparency = 1,
+		Text = opts.Text or "Toggle",
+		Font = Theme.FontRegular,
+		TextSize = 13,
+		TextColor3 = Theme.Text,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Size = UDim2.new(1, -46, 1, 0),
+	})
+	Label.Parent = Row
+
+	local Track = Util.Create("Frame", {
+		BackgroundColor3 = default and Theme.Primary or Color3.fromHex("2C2C2C"),
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, 0, 0.5, 0),
+		Size = UDim2.new(0, 38, 0, 20),
+	})
+	Util.Corner(UDim.new(1, 0)).Parent = Track
+	local Knob = Util.Create("Frame", {
+		BackgroundColor3 = Color3.fromHex("FFFFFF"),
+		Size = UDim2.new(0, 16, 0, 16),
+		Position = default and UDim2.new(1, -18, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
+		AnchorPoint = Vector2.new(0, 0.5),
+	})
+	Util.Corner(UDim.new(1, 0)).Parent = Knob
+	Knob.Parent = Track
+
+	local ClickCatch = Util.Create("TextButton", {
+		BackgroundTransparency = 1,
+		Text = "",
+		Size = UDim2.new(1, 0, 1, 0),
+	})
+	ClickCatch.Parent = Track
+	Track.Parent = Row
+	Row.Parent = self.Frame
+
+	local state = default
+	local function render(animated)
+		local info = animated and EASE.Pop or TweenInfo.new(0)
+		Util.Tween(Track, EASE.Smooth, { BackgroundColor3 = state and Theme.Primary or Color3.fromHex("2C2C2C") })
+		Util.Tween(Knob, info, { Position = state and UDim2.new(1, -18, 0.5, 0) or UDim2.new(0, 2, 0.5, 0) })
+	end
+
+	ClickCatch.MouseButton1Click:Connect(function()
+		state = not state
+		render(true)
+		callback(state)
+		if flag then Myth.Flags[flag] = state end
+	end)
+
+	if flag then Myth.Flags[flag] = state end
+
+	local api = {}
+	function api:Set(value)
+		state = value
+		render(true)
+		if flag then Myth.Flags[flag] = state end
+	end
+	function api:Get() return state end
+	return api
+end
+
+--// SLIDER ---------------------------------------------------------------------
+function GroupBox:AddSlider(opts)
+	opts = opts or {}
+	local min, max = opts.Min or 0, opts.Max or 100
+	local default = math.clamp(opts.Default or min, min, max)
+	local suffix = opts.Suffix or ""
+	local flag = opts.Flag
+	local callback = opts.Callback or function() end
+	local rounding = opts.Rounding or 0
+
+	local HeaderRow = Util.Create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 16),
+		LayoutOrder = NextOrder(self),
+	})
+	Util.Create("TextLabel", {
+		BackgroundTransparency = 1,
+		Text = opts.Text or "Slider",
+		Font = Theme.FontRegular,
+		TextSize = 13,
+		TextColor3 = Theme.Text,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Size = UDim2.new(0.6, 0, 1, 0),
+	}).Parent = HeaderRow
+
+	local ValueLabel = Util.Create("TextLabel", {
+		BackgroundTransparency = 1,
+		Text = tostring(default) .. suffix,
+		Font = Theme.FontMedium,
+		TextSize = 12,
+		TextColor3 = Theme.TextDim,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Size = UDim2.new(0.4, 0, 1, 0),
+	})
+	ValueLabel.Parent = HeaderRow
+	HeaderRow.Parent = self.Frame
+
+	local Bar = Util.Create("Frame", {
+		BackgroundColor3 = Color3.fromHex("2A2A2A"),
+		Size = UDim2.new(1, 0, 0, 6),
+		LayoutOrder = HeaderRow.LayoutOrder + 0.5,
+	})
+	Util.Corner(UDim.new(1, 0)).Parent = Bar
+
+	local Fill = Util.Create("Frame", {
+		BackgroundColor3 = Theme.Primary,
+		Size = UDim2.new((default - min) / (max - min), 0, 1, 0),
+		BorderSizePixel = 0,
+	})
+	Util.Corner(UDim.new(1, 0)).Parent = Fill
+	Fill.Parent = Bar
+
+	local Knob = Util.Create("Frame", {
+		BackgroundColor3 = Color3.fromHex("FFFFFF"),
+		Size = UDim2.new(0, 14, 0, 14),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new((default - min) / (max - min), 0, 0.5, 0),
+	})
+	Util.Corner(UDim.new(1, 0)).Parent = Knob
+	Util.Stroke(Theme.Primary, 2, 0).Parent = Knob
+	Knob.Parent = Bar
+
+	local DragCatch = Util.Create("TextButton", {
+		BackgroundTransparency = 1,
+		Text = "",
+		Size = UDim2.new(1, 0, 0, 20),
+		Position = UDim2.new(0, 0, 0.5, -10),
+	})
+	DragCatch.Parent = Bar
+	Bar.Parent = self.Frame
+
+	local value = default
+	local function setFromAlpha(alpha, animated)
+		alpha = math.clamp(alpha, 0, 1)
+		local raw = min + (max - min) * alpha
+		if rounding > 0 then
+			raw = math.floor(raw / rounding + 0.5) * rounding
+		else
+			raw = math.floor(raw + 0.5)
+		end
+		raw = math.clamp(raw, min, max)
+		value = raw
+		local a = (value - min) / (max - min)
+		local info = animated and EASE.Fast or TweenInfo.new(0)
+		Util.Tween(Fill, info, { Size = UDim2.new(a, 0, 1, 0) })
+		Util.Tween(Knob, info, { Position = UDim2.new(a, 0, 0.5, 0) })
+		ValueLabel.Text = tostring(value) .. suffix
+		callback(value)
+		if flag then Myth.Flags[flag] = value end
+	end
+
+	local dragging = false
+	DragCatch.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			local rel = (input.Position.X - Bar.AbsolutePosition.X) / Bar.AbsoluteSize.X
+			setFromAlpha(rel, true)
+			local conn
+			conn = input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+					conn:Disconnect()
+				end
+			end)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local rel = (input.Position.X - Bar.AbsolutePosition.X) / Bar.AbsoluteSize.X
+			setFromAlpha(rel, false)
+		end
+	end)
+
+	if flag then Myth.Flags[flag] = value end
+
+	local api = {}
+	function api:Set(v)
+		setFromAlpha((v - min) / (max - min), true)
+	end
+	function api:Get() return value end
+	return api
+end
+
+--// Shared dropdown option-list builder ----------------------------------------
+local function BuildOptionList(parent, options, rowHeight, onRowCreated)
+	local ListFrame = Util.Create("Frame", {
+		BackgroundColor3 = Theme.PanelLight,
+		Size = UDim2.new(1, 0, 0, 0),
+		ClipsDescendants = true,
+		LayoutOrder = 999,
+	})
+	Util.Corner(UDim.new(0, 6)).Parent = ListFrame
+	Util.Stroke(Theme.Stroke, 1, 0.3).Parent = ListFrame
+
+	local Scroller = Util.Create("ScrollingFrame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 1, 0),
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness = 2,
+		ScrollBarImageColor3 = Theme.Primary,
+	})
+	Util.Create("UIListLayout", {
+		Padding = UDim.new(0, 2),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = Scroller
+	Util.Pad(4, 4, 4, 4).Parent = Scroller
+	Scroller.Parent = ListFrame
+
+	for i, opt in ipairs(options) do
+		onRowCreated(Scroller, opt, i)
+	end
+
+	ListFrame.Parent = parent
+	return ListFrame, Scroller
+end
+
+--// DROPDOWN --------------------------------------------------------------------
+function GroupBox:AddDropdown(opts)
+	opts = opts or {}
+	local options = opts.Options or {}
+	local flag = opts.Flag
+	local callback = opts.Callback or function() end
+	local selected = opts.Default or options[1]
+
+	local Wrap = Util.Create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = NextOrder(self),
+		ClipsDescendants = false,
+	})
+	Util.Create("UIListLayout", {
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = Wrap
+
+	if opts.Text then
+		Util.Create("TextLabel", {
+			BackgroundTransparency = 1,
+			Text = opts.Text,
+			Font = Theme.FontRegular,
+			TextSize = 13,
+			TextColor3 = Theme.Text,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Size = UDim2.new(1, 0, 0, 16),
+			LayoutOrder = 1,
+		}).Parent = Wrap
+	end
+
+	local Head = Util.Create("TextButton", {
+		BackgroundColor3 = Theme.PanelLight,
+		AutoButtonColor = false,
+		Text = "",
+		Size = UDim2.new(1, 0, 0, 32),
+		LayoutOrder = 2,
+	})
+	Util.Corner(UDim.new(0, 6)).Parent = Head
+	Util.Stroke(Theme.Stroke, 1, 0.3).Parent = Head
+
+	local SelectedLabel = Util.Create("TextLabel", {
+		BackgroundTransparency = 1,
+		Text = tostring(selected or "Select..."),
+		Font = Theme.FontRegular,
+		TextSize = 12,
+		TextColor3 = Theme.Text,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Size = UDim2.new(1, -34, 1, 0),
+		Position = UDim2.new(0, 10, 0, 0),
+	})
+	SelectedLabel.Parent = Head
+
+	local Chevron = Util.Create("ImageLabel", {
+		BackgroundTransparency = 1,
+		Image = "rbxassetid://6031091004",
+		ImageColor3 = Theme.TextFaint,
+		Size = UDim2.new(0, 14, 0, 14),
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -10, 0.5, 0),
+		Rotation = 0,
+	})
+	Chevron.Parent = Head
+	Head.Parent = Wrap
+
+	local expanded = false
+
+	local function createRow(scroller, opt, i)
+		local Row = Util.Create("TextButton", {
+			BackgroundColor3 = (opt == selected) and Theme.Primary or Theme.PanelLight,
+			BackgroundTransparency = (opt == selected) and 0.85 or 1,
+			AutoButtonColor = false,
+			Text = tostring(opt),
+			Font = Theme.FontRegular,
+			TextSize = 12,
+			TextColor3 = (opt == selected) and Theme.Primary or Theme.TextDim,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Size = UDim2.new(1, 0, 0, 26),
+			LayoutOrder = i,
+		})
+		Util.Corner(UDim.new(0, 4)).Parent = Row
+		Util.Pad(8, 0, 8, 0).Parent = Row
+		Util.Hoverable(Row,
+			{ BackgroundTransparency = (opt == selected) and 0.85 or 1 },
+			{ BackgroundTransparency = 0.85, BackgroundColor3 = Theme.Primary }
+		)
+		Row.MouseButton1Click:Connect(function()
+			selected = opt
+			SelectedLabel.Text = tostring(opt)
+			for _, sibling in ipairs(scroller:GetChildren()) do
+				if sibling:IsA("TextButton") then
+					local isSel = sibling.Text == tostring(opt)
+					sibling.TextColor3 = isSel and Theme.Primary or Theme.TextDim
+					Util.Tween(sibling, EASE.Fast, { BackgroundTransparency = isSel and 0.85 or 1 })
+				end
+			end
+			callback(opt)
+			if flag then Myth.Flags[flag] = opt end
+		end)
+		Row.Parent = scroller
+	end
+
+	local ListFrame, Scroller = BuildOptionList(Wrap, options, 28, createRow)
+	ListFrame.Size = UDim2.new(1, 0, 0, 0)
+	ListFrame.Visible = false
+
+	local function toggleExpand()
+		expanded = not expanded
+		ListFrame.Visible = true
+		local targetHeight = math.min(#options * 28 + 8, 150)
+		Util.Tween(Chevron, EASE.Smooth, { Rotation = expanded and 180 or 0 })
+		local tween = Util.Tween(ListFrame, EASE.Smooth, { Size = UDim2.new(1, 0, 0, expanded and targetHeight or 0) })
+		if not expanded then
+			tween.Completed:Connect(function()
+				if not expanded then ListFrame.Visible = false end
+			end)
+		end
+	end
+
+	Head.MouseButton1Click:Connect(toggleExpand)
+	Wrap.Parent = self.Frame
+
+	if flag then Myth.Flags[flag] = selected end
+
+	local api = {}
+	function api:Set(opt)
+		selected = opt
+		SelectedLabel.Text = tostring(opt)
+		if flag then Myth.Flags[flag] = opt end
+	end
+	function api:Get() return selected end
+	function api:Refresh(newOptions)
+		options = newOptions
+		for _, c in ipairs(Scroller:GetChildren()) do
+			if c:IsA("TextButton") then c:Destroy() end
+		end
+		for i, opt in ipairs(options) do
+			createRow(Scroller, opt, i)
+		end
+		if selected and not table.find(options, selected) then
+			selected = options[1]
+			SelectedLabel.Text = tostring(selected or "Select...")
+		end
+	end
+	return api
+end
+
+--// MULTI DROPDOWN ---------------------------------------------------------------
+function GroupBox:AddMultiDropdown(opts)
+	opts = opts or {}
+	local options = opts.Options or {}
+	local flag = opts.Flag
+	local callback = opts.Callback or function() end
+	local selectedSet = {}
+	for _, v in ipairs(opts.Default or {}) do selectedSet[v] = true end
+
+	local Wrap = Util.Create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = NextOrder(self),
+	})
+	Util.Create("UIListLayout", {
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = Wrap
+
+	local function countLabel()
+		local n = 0
+		for _ in pairs(selectedSet) do n += 1 end
+		if n == 0 then return opts.Placeholder or "Choose multiple..." end
+		return n .. " selected"
+	end
+
+	local Head = Util.Create("TextButton", {
+		BackgroundColor3 = Theme.PanelLight,
+		AutoButtonColor = false,
+		Text = "",
+		Size = UDim2.new(1, 0, 0, 32),
+		LayoutOrder = 1,
+	})
+	Util.Corner(UDim.new(0, 6)).Parent = Head
+	Util.Stroke(Theme.Stroke, 1, 0.3).Parent = Head
+
+	local SelectedLabel = Util.Create("TextLabel", {
+		BackgroundTransparency = 1,
+		Text = countLabel(),
+		Font = Theme.FontRegular,
+		TextSize = 12,
+		TextColor3 = Theme.TextDim,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Size = UDim2.new(1, -34, 1, 0),
+		Position = UDim2.new(0, 10, 0, 0),
+	})
+	SelectedLabel.Parent = Head
+
+	local Chevron = Util.Create("ImageLabel", {
+		BackgroundTransparency = 1,
+		Image = "rbxassetid://6031091004",
+		ImageColor3 = Theme.TextFaint,
+		Size = UDim2.new(0, 14, 0, 14),
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -10, 0.5, 0),
+	})
+	Chevron.Parent = Head
+	Head.Parent = Wrap
+
+	local checkboxes = {}
+	local ListFrame, Scroller = BuildOptionList(Wrap, options, 26, function(scroller, opt, i)
+		local Row = Util.Create("TextButton", {
+			BackgroundTransparency = 1,
+			AutoButtonColor = false,
+			Text = "",
+			Size = UDim2.new(1, 0, 0, 26),
+			LayoutOrder = i,
+		})
+		local Check = Util.Create("Frame", {
+			BackgroundColor3 = selectedSet[opt] and Theme.Primary or Theme.PanelLight,
+			Size = UDim2.new(0, 16, 0, 16),
+			Position = UDim2.new(0, 6, 0.5, -8),
+		})
+		Util.Corner(UDim.new(0, 4)).Parent = Check
+		Util.Stroke(selectedSet[opt] and Theme.Primary or Theme.Stroke, 1, 0).Parent = Check
+		local Mark = Util.Create("ImageLabel", {
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://6031094667",
+			ImageColor3 = Color3.fromHex("FFFFFF"),
+			ImageTransparency = selectedSet[opt] and 0 or 1,
+			Size = UDim2.new(1, -4, 1, -4),
+			Position = UDim2.new(0, 2, 0, 2),
+		})
+		Mark.Parent = Check
+		Check.Parent = Row
+
+		Util.Create("TextLabel", {
+			BackgroundTransparency = 1,
+			Text = tostring(opt),
+			Font = Theme.FontRegular,
+			TextSize = 12,
+			TextColor3 = Theme.TextDim,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Size = UDim2.new(1, -34, 1, 0),
+			Position = UDim2.new(0, 30, 0, 0),
+		}).Parent = Row
+
+		checkboxes[opt] = { Check = Check, Mark = Mark }
+
+		Row.MouseButton1Click:Connect(function()
+			selectedSet[opt] = not selectedSet[opt] or nil
+			local isSel = selectedSet[opt] == true
+			Util.Tween(Check, EASE.Fast, { BackgroundColor3 = isSel and Theme.Primary or Theme.PanelLight })
+			Util.Tween(Mark, EASE.Fast, { ImageTransparency = isSel and 0 or 1 })
+			SelectedLabel.Text = countLabel()
+
+			local list = {}
+			for k, v in pairs(selectedSet) do if v then table.insert(list, k) end end
+			callback(list)
+			if flag then Myth.Flags[flag] = list end
+		end)
+		Row.Parent = scroller
+	end)
+	ListFrame.Size = UDim2.new(1, 0, 0, 0)
+	ListFrame.Visible = false
+
+	local expanded = false
+	Head.MouseButton1Click:Connect(function()
+		expanded = not expanded
+		ListFrame.Visible = true
+		local targetHeight = math.min(#options * 26 + 8, 150)
+		Util.Tween(Chevron, EASE.Smooth, { Rotation = expanded and 180 or 0 })
+		local tween = Util.Tween(ListFrame, EASE.Smooth, { Size = UDim2.new(1, 0, 0, expanded and targetHeight or 0) })
+		if not expanded then
+			tween.Completed:Connect(function()
+				if not expanded then ListFrame.Visible = false end
+			end)
+		end
+	end)
+
+	Wrap.Parent = self.Frame
+
+	local api = {}
+	function api:Get()
+		local list = {}
+		for k, v in pairs(selectedSet) do if v then table.insert(list, k) end end
+		return list
+	end
+	return api
+end
+
+--// TEXTBOX ---------------------------------------------------------------------
+function GroupBox:AddTextbox(opts)
+	opts = opts or {}
+	local flag = opts.Flag
+	local callback = opts.Callback or function() end
+
+	local Wrap = Util.Create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = NextOrder(self),
+	})
+	Util.Create("UIListLayout", {
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = Wrap
+
+	if opts.Text then
+		Util.Create("TextLabel", {
+			BackgroundTransparency = 1,
+			Text = opts.Text,
+			Font = Theme.FontRegular,
+			TextSize = 13,
+			TextColor3 = Theme.Text,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Size = UDim2.new(1, 0, 0, 16),
+		}).Parent = Wrap
+	end
+
+	local Box = Util.Create("Frame", {
+		BackgroundColor3 = Theme.PanelLight,
+		Size = UDim2.new(1, 0, 0, 32),
+	})
+	Util.Corner(UDim.new(0, 6)).Parent = Box
+	local stroke = Util.Stroke(Theme.Stroke, 1, 0.3)
+	stroke.Parent = Box
+
+	local Input = Util.Create("TextBox", {
+		BackgroundTransparency = 1,
+		Text = opts.Default or "",
+		PlaceholderText = opts.Placeholder or "Type here...",
+		PlaceholderColor3 = Theme.TextFaint,
+		Font = Theme.FontRegular,
+		TextSize = 12,
+		TextColor3 = Theme.Text,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ClearTextOnFocus = false,
+		Size = UDim2.new(1, -20, 1, 0),
+		Position = UDim2.new(0, 10, 0, 0),
+	})
+	Input.Parent = Box
+	Box.Parent = Wrap
+	Wrap.Parent = self.Frame
+
+	Input.Focused:Connect(function()
+		Util.Tween(stroke, EASE.Fast, { Color = Theme.Primary, Transparency = 0 })
+	end)
+	Input.FocusLost:Connect(function(enterPressed)
+		Util.Tween(stroke, EASE.Fast, { Color = Theme.Stroke, Transparency = 0.3 })
+		callback(Input.Text, enterPressed)
+		if flag then Myth.Flags[flag] = Input.Text end
+	end)
+
+	local api = {}
+	function api:Set(text) Input.Text = text end
+	function api:Get() return Input.Text end
+	return api
+end
+
+--// KEYBIND ---------------------------------------------------------------------
+function GroupBox:AddKeybind(opts)
+	opts = opts or {}
+	local flag = opts.Flag
+	local callback = opts.Callback or function() end
+	local currentKey = opts.Default
+
+	local Wrap = Util.Create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = NextOrder(self),
+	})
+	Util.Create("UIListLayout", {
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = Wrap
+
+	if opts.Text then
+		Util.Create("TextLabel", {
+			BackgroundTransparency = 1,
+			Text = opts.Text,
+			Font = Theme.FontRegular,
+			TextSize = 13,
+			TextColor3 = Theme.Text,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Size = UDim2.new(1, 0, 0, 16),
+		}).Parent = Wrap
+	end
+
+	local Row = Util.Create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 32),
+	})
+
+	local KeyDisplay = Util.Create("TextButton", {
+		BackgroundColor3 = Theme.PanelLight,
+		AutoButtonColor = false,
+		Text = currentKey and currentKey.Name or "None",
+		Font = Theme.FontMedium,
+		TextSize = 12,
+		TextColor3 = Theme.TextDim,
+		Size = UDim2.new(1, -38, 1, 0),
+	})
+	Util.Corner(UDim.new(0, 6)).Parent = KeyDisplay
+	Util.Stroke(Theme.Stroke, 1, 0.3).Parent = KeyDisplay
+	KeyDisplay.Parent = Row
+
+	local MoreBtn = Util.Create("TextButton", {
+		BackgroundColor3 = Theme.PanelLight,
+		AutoButtonColor = false,
+		Text = "\226\139\175",
+		Font = Theme.FontMedium,
+		TextSize = 13,
+		TextColor3 = Theme.TextDim,
+		Size = UDim2.new(0, 30, 1, 0),
+		Position = UDim2.new(1, -30, 0, 0),
+	})
+	Util.Corner(UDim.new(0, 6)).Parent = MoreBtn
+	Util.Stroke(Theme.Stroke, 1, 0.3).Parent = MoreBtn
+	MoreBtn.Parent = Row
+	Row.Parent = Wrap
+	Wrap.Parent = self.Frame
+
+	local listening = false
+	KeyDisplay.MouseButton1Click:Connect(function()
+		listening = true
+		KeyDisplay.Text = "..."
+		Util.Tween(KeyDisplay, EASE.Fast, { BackgroundColor3 = Theme.Primary })
+	end)
+
+	local conn
+	conn = UserInputService.InputBegan:Connect(function(input, gpe)
+		if listening and input.UserInputType == Enum.UserInputType.Keyboard then
+			currentKey = input.KeyCode
+			KeyDisplay.Text = currentKey.Name
+			listening = false
+			Util.Tween(KeyDisplay, EASE.Fast, { BackgroundColor3 = Theme.PanelLight })
+			callback(currentKey)
+			if flag then Myth.Flags[flag] = currentKey end
+		end
+	end)
+
+	local api = { Connection = conn }
+	function api:Set(keyCode)
+		currentKey = keyCode
+		KeyDisplay.Text = keyCode and keyCode.Name or "None"
+	end
+	function api:Get() return currentKey end
+	return api
+end
+
+--// COLOR PICKER -----------------------------------------------------------------
+function GroupBox:AddColorPicker(opts)
+	opts = opts or {}
+	local flag = opts.Flag
+	local callback = opts.Callback or function() end
+	local color = opts.Default or Theme.Primary
+
+	local Wrap = Util.Create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = NextOrder(self),
+	})
+	Util.Create("UIListLayout", {
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = Wrap
+
+	if opts.Text then
+		Util.Create("TextLabel", {
+			BackgroundTransparency = 1,
+			Text = opts.Text,
+			Font = Theme.FontRegular,
+			TextSize = 13,
+			TextColor3 = Theme.Text,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Size = UDim2.new(1, 0, 0, 16),
+		}).Parent = Wrap
+	end
+
+	local Head = Util.Create("TextButton", {
+		BackgroundColor3 = Theme.PanelLight,
+		AutoButtonColor = false,
+		Text = "",
+		Size = UDim2.new(1, 0, 0, 32),
+	})
+	Util.Corner(UDim.new(0, 6)).Parent = Head
+	Util.Stroke(Theme.Stroke, 1, 0.3).Parent = Head
+
+	local Swatch = Util.Create("Frame", {
+		BackgroundColor3 = color,
+		Size = UDim2.new(0, 22, 0, 22),
+		Position = UDim2.new(0, 6, 0.5, -11),
+	})
+	Util.Corner(UDim.new(0, 5)).Parent = Swatch
+	Util.Stroke(Color3.fromHex("000000"), 1, 0.5).Parent = Swatch
+	Swatch.Parent = Head
+
+	local HexLabel = Util.Create("TextLabel", {
+		BackgroundTransparency = 1,
+		Text = "#" .. color:ToHex():upper(),
+		Font = Theme.FontMedium,
+		TextSize = 12,
+		TextColor3 = Theme.TextDim,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Size = UDim2.new(1, -42, 1, 0),
+		Position = UDim2.new(0, 36, 0, 0),
+	})
+	HexLabel.Parent = Head
+	Head.Parent = Wrap
+
+	-- Expandable panel: hue strip + swatch presets (kept compact/mobile-safe)
+	local Panel = Util.Create("Frame", {
+		BackgroundColor3 = Theme.PanelLight,
+		Size = UDim2.new(1, 0, 0, 0),
+		ClipsDescendants = true,
+	})
+	Util.Corner(UDim.new(0, 6)).Parent = Panel
+	Util.Stroke(Theme.Stroke, 1, 0.3).Parent = Panel
+	Util.Pad(10, 10, 10, 10).Parent = Panel
+
+	local GradientBar = Util.Create("Frame", {
+		BackgroundColor3 = Color3.fromHex("FFFFFF"),
+		Size = UDim2.new(1, 0, 0, 14),
+		Position = UDim2.new(0, 0, 0, 0),
+	})
+	Util.Corner(UDim.new(1, 0)).Parent = GradientBar
+	Util.Create("UIGradient", {
+		Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromHex("FF0000")),
+			ColorSequenceKeypoint.new(0.17, Color3.fromHex("FFFF00")),
+			ColorSequenceKeypoint.new(0.34, Color3.fromHex("00FF00")),
+			ColorSequenceKeypoint.new(0.51, Color3.fromHex("00FFFF")),
+			ColorSequenceKeypoint.new(0.68, Color3.fromHex("0000FF")),
+			ColorSequenceKeypoint.new(0.85, Color3.fromHex("FF00FF")),
+			ColorSequenceKeypoint.new(1, Color3.fromHex("FF0000")),
+		}),
+	}).Parent = GradientBar
+	GradientBar.Parent = Panel
+
+	local PresetRow = Util.Create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 22),
+		Position = UDim2.new(0, 0, 0, 22),
+	})
+	Util.Create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = PresetRow
+
+	local presets = { "E53935", "FF7A00", "FFC53D", "3DDC84", "3D8BFF", "8B3DFF", "FF3DC9", "FFFFFF" }
+
+	Panel.Size = UDim2.new(1, 0, 0, 0)
+	Panel.Parent = Wrap
+	Wrap.Parent = self.Frame
+
+	local function updateSwatch()
+		Swatch.BackgroundColor3 = color
+		HexLabel.Text = "#" .. color:ToHex():upper()
+		callback(color)
+		if flag then Myth.Flags[flag] = color end
+	end
+
+	for _, hex in ipairs(presets) do
+		local Preset = Util.Create("TextButton", {
+			BackgroundColor3 = Color3.fromHex(hex),
+			AutoButtonColor = false,
+			Text = "",
+			Size = UDim2.new(0, 20, 0, 20),
+		})
+		Util.Corner(UDim.new(0, 5)).Parent = Preset
+		Util.Stroke(Color3.fromHex("000000"), 1, 0.5).Parent = Preset
+		Preset.MouseButton1Click:Connect(function()
+			color = Color3.fromHex(hex)
+			updateSwatch()
+		end)
+		Preset.Parent = PresetRow
+	end
+	PresetRow.Parent = Panel
+
+	-- Click-drag on gradient bar to pick a hue (simplified single-axis picker)
+	local pickingHue = false
+	local function setFromBarX(px)
+		local alpha = math.clamp(px / GradientBar.AbsoluteSize.X, 0, 1)
+		color = Color3.fromHSV(alpha, 0.85, 1)
+		updateSwatch()
+	end
+	GradientBar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			pickingHue = true
+			setFromBarX(input.Position.X - GradientBar.AbsolutePosition.X)
+			local conn
+			conn = input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					pickingHue = false
+					conn:Disconnect()
+				end
+			end)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if pickingHue and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			setFromBarX(input.Position.X - GradientBar.AbsolutePosition.X)
+		end
+	end)
+
+	local expanded = false
+	Head.MouseButton1Click:Connect(function()
+		expanded = not expanded
+		Util.Tween(Panel, EASE.Smooth, { Size = UDim2.new(1, 0, 0, expanded and 66 or 0) })
+	end)
+
+	if flag then Myth.Flags[flag] = color end
+
+	local api = {}
+	function api:Set(c)
+		color = c
+		updateSwatch()
+	end
+	function api:Get() return color end
+	return api
+end
+
+--// ============================================================================
+--// THEME MANAGER
+--// ============================================================================
+-- Lets end-users retint the whole interface (primary color, brightness,
+-- corner style, border thickness) live, with every open component updating
+-- through the same Theme table this file already reads from.
+local PRESET_THEMES = {
+	["Myth Red"]   = { Primary = "E53935" },
+	["Cyber Cyan"] = { Primary = "3DDCDC" },
+	["Amber"]      = { Primary = "FFA83D" },
+	["Emerald"]    = { Primary = "3DDC84" },
+	["Sapphire"]   = { Primary = "3D8BFF" },
+	["Violet"]     = { Primary = "8B3DFF" },
+	["Magenta"]    = { Primary = "FF3DC9" },
+	["Mono"]       = { Primary = "CCCCCC" },
+}
+
+local ThemeSubscribers = {}
+local function BroadcastThemeChange()
+	for _, fn in ipairs(ThemeSubscribers) do
+		pcall(fn, Theme)
+	end
+end
+
+function GroupBox:AddThemeManagerPreview()
+	-- Theme select dropdown
+	local themeNames = {}
+	for name in pairs(PRESET_THEMES) do table.insert(themeNames, name) end
+	table.sort(themeNames)
+
+	self:AddLabel("Select theme")
+	local ThemeDropdown = self:AddDropdown({
+		Options = themeNames,
+		Default = "Myth Red",
+		Callback = function(name)
+			local preset = PRESET_THEMES[name]
+			if preset and preset.Primary then
+				Theme.Primary = Color3.fromHex(preset.Primary)
+				BroadcastThemeChange()
+			end
+		end,
+	})
+
+	self:AddLabel("Preset accents")
+	local SwatchRow = Util.Create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 24),
+		LayoutOrder = NextOrder(self),
+	})
+	Util.Create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = SwatchRow
+	for name, preset in pairs(PRESET_THEMES) do
+		local sw = Util.Create("TextButton", {
+			BackgroundColor3 = Color3.fromHex(preset.Primary),
+			AutoButtonColor = false,
+			Text = "",
+			Size = UDim2.new(0, 22, 0, 22),
+		})
+		Util.Corner(UDim.new(0, 6)).Parent = sw
+		Util.Stroke(Color3.fromHex("000000"), 1, 0.5).Parent = sw
+		sw.MouseButton1Click:Connect(function()
+			Theme.Primary = Color3.fromHex(preset.Primary)
+			BroadcastThemeChange()
+		end)
+		sw.Parent = SwatchRow
+	end
+	SwatchRow.Parent = self.Frame
+
+	self:AddSlider({
+		Text = "Panel brightness",
+		Min = 0, Max = 100, Default = 9, Suffix = "%",
+		Callback = function(v)
+			local level = 0.09 + (v / 100) * 0.15
+			Theme.Panel = Color3.fromHSV(0, 0, level)
+			BroadcastThemeChange()
+		end,
+	})
+
+	self:AddDropdown({
+		Text = "Corner style",
+		Options = { "Sharp", "Default", "Rounded" },
+		Default = "Default",
+		Callback = function(v)
+			local radius = ({ Sharp = 2, Default = 8, Rounded = 14 })[v]
+			Theme.CornerRadius = UDim.new(0, radius)
+			BroadcastThemeChange()
+		end,
+	})
+
+	return { Subscribe = function(fn) table.insert(ThemeSubscribers, fn) end }
+end
+
+--// ============================================================================
+--// CONFIG MANAGER
+--// ============================================================================
+-- Save / load Myth.Flags snapshots by name. Persistence layer (file write)
+-- is left as a hook (SaveToFile / LoadFromFile) so it can be wired to
+-- writefile/readfile in a real executor environment without touching UI code.
+local ConfigStore = {}   -- name -> serialized flag table (in-memory registry)
+
+local function SerializeFlags()
+	local snapshot = {}
+	for k, v in pairs(Myth.Flags) do
+		if typeof(v) == "Color3" then
+			snapshot[k] = { __type = "Color3", value = v:ToHex() }
+		elseif typeof(v) == "EnumItem" then
+			snapshot[k] = { __type = "Enum", value = v.Name }
+		else
+			snapshot[k] = v
+		end
+	end
+	return snapshot
+end
+
+local function ApplyFlags(snapshot)
+	for k, v in pairs(snapshot) do
+		if type(v) == "table" and v.__type == "Color3" then
+			Myth.Flags[k] = Color3.fromHex(v.value)
+		elseif type(v) == "table" and v.__type == "Enum" then
+			Myth.Flags[k] = Enum.KeyCode[v.value]
+		else
+			Myth.Flags[k] = v
+		end
+	end
+end
+
+function Myth:SaveConfig(name)
+	ConfigStore[name] = SerializeFlags()
+	self:Notify({ Title = "Config saved", Content = '"' .. name .. '" stored successfully.', Type = "Success" })
+end
+
+function Myth:LoadConfig(name)
+	local snap = ConfigStore[name]
+	if not snap then
+		self:Notify({ Title = "Load failed", Content = '"' .. name .. '" was not found.', Type = "Error" })
+		return
+	end
+	ApplyFlags(snap)
+	self:Notify({ Title = "Config loaded", Content = '"' .. name .. '" applied.', Type = "Success" })
+end
+
+function Myth:DeleteConfig(name)
+	ConfigStore[name] = nil
+	self:Notify({ Title = "Config deleted", Content = '"' .. name .. '" removed.', Type = "Warning" })
+end
+
+function Myth:ListConfigs()
+	local list = {}
+	for name in pairs(ConfigStore) do table.insert(list, name) end
+	table.sort(list)
+	return list
+end
+
+-- Convenience UI builder: drops a full Config Manager groupbox (list +
+-- Load / Save / Delete / Create actions) into any Section.
+function Section:AddConfigManager()
+	local ListBox = self:AddGroupBox("Saved configs")
+	local ActionsBox = self:AddGroupBox("Actions")
+
+	local currentSelection = nil
+	local rows = {}
+
+	local ListHolder = Util.Create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = NextOrder(ListBox),
+	})
+	Util.Create("UIListLayout", {
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}).Parent = ListHolder
+	ListHolder.Parent = ListBox.Frame
+
+	local function refreshList()
+		for _, r in ipairs(rows) do r:Destroy() end
+		table.clear(rows)
+		for i, name in ipairs(Myth:ListConfigs()) do
+			local Row = Util.Create("TextButton", {
+				BackgroundColor3 = (name == currentSelection) and Theme.Primary or Theme.PanelLight,
+				BackgroundTransparency = (name == currentSelection) and 0.85 or 1,
+				AutoButtonColor = false,
+				Text = name,
+				Font = Theme.FontRegular,
+				TextSize = 12,
+				TextColor3 = (name == currentSelection) and Theme.Primary or Theme.Text,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				Size = UDim2.new(1, 0, 0, 28),
+				LayoutOrder = i,
+			})
+			Util.Corner(UDim.new(0, 5)).Parent = Row
+			Util.Pad(10, 0, 10, 0).Parent = Row
+			Row.MouseButton1Click:Connect(function()
+				currentSelection = name
+				refreshList()
+			end)
+			Row.Parent = ListHolder
+			table.insert(rows, Row)
+		end
+	end
+	refreshList()
+
+	ActionsBox:AddButton({
+		Text = "Load config",
+		Variant = "Primary",
+		Callback = function()
+			if currentSelection then Myth:LoadConfig(currentSelection) end
+		end,
+	})
+	ActionsBox:AddButton({
+		Text = "Save config",
+		Variant = "Secondary",
+		Callback = function()
+			if currentSelection then
+				Myth:SaveConfig(currentSelection)
+				refreshList()
+			end
+		end,
+	})
+	ActionsBox:AddButton({
+		Text = "Delete config",
+		Variant = "Secondary",
+		Callback = function()
+			if currentSelection then
+				Myth:DeleteConfig(currentSelection)
+				currentSelection = nil
+				refreshList()
+			end
+		end,
+	})
+	ActionsBox:AddTextbox({
+		Placeholder = "New config name...",
+		Callback = function(text, enterPressed)
+			if enterPressed and text ~= "" then
+				Myth:SaveConfig(text)
+				currentSelection = text
+				refreshList()
+			end
+		end,
+	})
+
+	return { Refresh = refreshList }
+end
+
+return Myth
